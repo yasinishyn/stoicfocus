@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+body {
+  font-family: 'Space Mono', monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d4d4d8;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a1a1aa;
+}
+
+/* Monochrome overlay */
+#stoicfocus-monochrome-layer {
+  pointer-events: none;
+}
+
+#stoicfocus-monochrome-notification {
+  pointer-events: none;
+}
+
+/* Keep StoicFocus UI elements colored even in monochrome */
+#stoicfocus-block-button,
+#stoicfocus-block-button *,
+#stoicfocus-doom-alert,
+#stoicfocus-monochrome-notification {
+  filter: none !important;
+  -webkit-filter: none !important;
+}
+
+#stoicfocus-block-button {
+  position: fixed !important;
+  bottom: 24px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  transform: translateZ(0) !important;
+  mix-blend-mode: normal !important;
+  isolation: isolate !important;
+  background: transparent !important;
+}
+
+#stoicfocus-doom-alert,
+#stoicfocus-monochrome-notification {
+  background-color: #dc2626 !important;
+  color: white !important;
+  mix-blend-mode: normal !important;
+  isolation: isolate !important;
+}
+
+#stoicfocus-block-button button {
+  background-color: #dc2626 !important;
+  color: #ffffff !important;
+  filter: none !important;
+  -webkit-filter: none !important;
+  mix-blend-mode: normal !important;
+  isolation: isolate !important;
+}
+
+#stoicfocus-block-button svg,
+#stoicfocus-block-button svg * {
+  stroke: #ffffff !important;
+  fill: none !important;
+  filter: none !important;
+  -webkit-filter: none !important;
+  mix-blend-mode: normal !important;
+}
+
