@@ -94,7 +94,7 @@ const loadSettings = async (): Promise<AppSettings> => {
       enabled: true,
       showInjectedIcon: true,
       doomScrollLimit: 3,
-      monochromeMode: true,
+      monochromeMode: false,
       mementoMoriEnabled: false
     };
   } catch (e) {
@@ -103,7 +103,7 @@ const loadSettings = async (): Promise<AppSettings> => {
       enabled: true,
       showInjectedIcon: true,
       doomScrollLimit: 3,
-      monochromeMode: true,
+      monochromeMode: false,
       mementoMoriEnabled: false
     };
   }
@@ -338,6 +338,28 @@ const domainsMatch = (a: string, b: string) => {
 let isWhitelisted = false;
 let blockButtonCollapsed = false;
 
+const computeListFlags = (
+  blockedSites: BlockedSite[],
+  categories: CategoryDefinitions,
+  currentDomain: string
+) => {
+  const normalizeType = (lt: string) => lt === 'blacklist' ? 'blocklist' : lt;
+  const matches = (site: BlockedSite) => {
+    if (site.type === 'domain') return domainsMatch(currentDomain, site.domain);
+    const domains = categories[site.category] || [];
+    return domains.some(d => domainsMatch(currentDomain, d));
+  };
+  let inBlock = false, inGrey = false, inWhite = false;
+  blockedSites.forEach((s: any) => {
+    const lt = normalizeType(s.listType);
+    if (!matches(s)) return;
+    if (lt === 'blocklist') inBlock = true;
+    else if (lt === 'greylist') inGrey = true;
+    else if (lt === 'whitelist') inWhite = true;
+  });
+  return { inBlock, inGrey, inWhite };
+};
+
 // Inject fixed-position styles for StoicFocus UI to avoid filter/height side-effects
 const ensureFixedStyles = () => {
   if (document.getElementById('stoicfocus-fixed-styles')) return;
@@ -468,7 +490,28 @@ let monochromeApplied = false;
 const applyMonochrome = async (immediate = false) => {
   try {
     // Don't apply to extension pages or PDF views (to avoid black PDFs)
-    if (isExtensionPage() || isPdfPage() || isWhitelisted) {
+    if (isExtensionPage() || isPdfPage()) {
+      return;
+    }
+
+    // Refresh whitelist status for current domain on each apply
+    const currentDomain = window.location.hostname.replace('www.', '').toLowerCase();
+    const { blockedSites, categoryDefinitions } = await loadBlockedSites();
+    const { inBlock, inGrey, inWhite } = computeListFlags(blockedSites, categoryDefinitions, currentDomain);
+    isWhitelisted = inWhite && !inBlock && !inGrey;
+    if (isWhitelisted) {
+      // If previously applied, clean up overlay/filters for whitelisted domains
+      monochromeApplied = false;
+      ensureMonochromeLayer(false);
+      document.body.classList.remove('stoicfocus-monochrome');
+      document.body.style.removeProperty('filter');
+      document.body.style.removeProperty('-webkit-filter');
+      document.body.style.removeProperty('transition');
+      document.documentElement.style.removeProperty('filter');
+      document.documentElement.style.removeProperty('-webkit-filter');
+      document.documentElement.style.removeProperty('transition');
+      const notification = document.getElementById('stoicfocus-monochrome-notification');
+      if (notification) notification.remove();
       return;
     }
 
@@ -592,21 +635,7 @@ const init = async () => {
   const { blockedSites, categoryDefinitions } = await loadBlockedSites();
   const currentDomain = window.location.hostname.replace('www.', '').toLowerCase();
   
-  const isDomainInList = (site: BlockedSite, list: 'greylist' | 'blocklist' | 'whitelist') => {
-    const listType = (site as any).listType === 'blacklist' ? 'blocklist' : site.listType;
-    if (listType !== list) return false;
-    if (site.type === 'domain') {
-      return domainsMatch(currentDomain, site.domain);
-    } else {
-      const domains = categoryDefinitions[site.category] || [];
-      return domains.some(d => domainsMatch(currentDomain, d));
-    }
-  };
-
-  const inBlock = blockedSites.some(s => isDomainInList(s, 'blocklist'));
-  const inGrey = blockedSites.some(s => isDomainInList(s, 'greylist'));
-  const inWhite = blockedSites.some(s => isDomainInList(s, 'whitelist'));
-
+  const { inBlock, inGrey, inWhite } = computeListFlags(blockedSites, categoryDefinitions, currentDomain);
   isWhitelisted = inWhite && !inBlock && !inGrey;
 
   if (inGrey && !inBlock && !isWhitelisted) {
@@ -688,10 +717,15 @@ window.addEventListener('focus', () => {
 if (isExtensionContextValid()) {
   try {
     chrome.storage.onChanged.addListener((changes, areaName) => {
-      if (changes.settings && areaName === 'sync') {
-        // Reset applied state when settings change
-        monochromeApplied = false;
-        applyMonochrome(false);
+      if (areaName === 'sync') {
+        if (changes.settings) {
+          monochromeApplied = false;
+          applyMonochrome(false);
+        }
+        if (changes.blockedSites || changes.categoryDefinitions) {
+          monochromeApplied = false;
+          applyMonochrome(false);
+        }
       }
     });
   } catch (e) {

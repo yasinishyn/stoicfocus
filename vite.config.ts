@@ -52,6 +52,10 @@ export default defineConfig(({ mode }) => {
           }
         },
         copyPublicDir: true,
+      },
+      test: {
+        globals: true,
+        environment: 'node'
       }
     };
 });

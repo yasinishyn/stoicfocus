@@ -4,6 +4,7 @@ import { Trash2, Lock, Plus, CheckCircle2, Ban, BarChart3, Settings as SettingsI
 import { BlockedSite, AppSettings, AppMetrics } from '../src/types';
 import { getRandomQuote } from '../services/staticQuotes';
 import { classifyDomain } from '../src/utils';
+import { buildConflictMessage, categoryHasConflicts, getDomainConflicts, hasSiteConflicts } from '../src/conflictUtils';
 
 interface DashboardProps {
   blockedSites: BlockedSite[];
@@ -134,7 +135,7 @@ const FocusChartCard = React.memo(() => {
     loadTimeData();
     
     // Listen for time data changes
-    const handleStorageChange = (changes: { [key: string]: chrome.storage.StorageChange }, areaName: string) => {
+    const handleStorageChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, areaName: string) => {
       if (changes.dailyTimeData && areaName === 'local') {
         loadTimeData();
       }
@@ -413,60 +414,6 @@ const Dashboard: React.FC<DashboardProps> = ({
 
 const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
     const sites = blockedSites.filter(s => s.listType === type || (type === 'blocklist' && s.listType === 'blacklist'));
-    
-    const normalizeDomain = (d: string) => d.toLowerCase().replace(/^www\./, '');
-    const domainsMatch = (a: string, b: string) => {
-      const da = normalizeDomain(a);
-      const db = normalizeDomain(b);
-      return da === db || da.endsWith(`.${db}`) || db.endsWith(`.${da}`);
-    };
-
-    // Helper to check if a domain exists in the opposite list (domains or categories)
-    const getDomainConflicts = (domain: string, currentListType: 'blocklist' | 'greylist' | 'whitelist') => {
-      const conflicts: Array<{ listType: 'blocklist' | 'greylist' | 'whitelist'; category: string }> = [];
-      blockedSites.forEach(s => {
-        const lt = s.listType === 'blacklist' ? 'blocklist' : s.listType;
-        if (lt === currentListType) return;
-        if (s.type === 'domain' && domainsMatch(s.domain, domain)) {
-          conflicts.push({ listType: lt as any, category: s.category });
-        } else if (s.type === 'category') {
-          const domains = categoryDefinitions[s.category] || [];
-          if (domains.some(d => domainsMatch(d, domain))) {
-            conflicts.push({ listType: lt as any, category: s.category });
-          }
-        }
-      });
-      return conflicts.sort((a, b) => {
-        const order: Record<string, number> = { blocklist: 3, greylist: 2, whitelist: 1 };
-        return (order[b.listType] || 0) - (order[a.listType] || 0);
-      });
-    };
-    
-    // Helper to check if a category has duplicate domains
-    const getCategoryConflicts = (categoryKey: string, currentListType: 'blocklist' | 'greylist' | 'whitelist') => {
-      const domains = categoryDefinitions[categoryKey] || [];
-      const hasDuplicates = domains.some(domain => {
-        return blockedSites.some(s => {
-          const lt = s.listType === 'blacklist' ? 'blocklist' : s.listType;
-          if (lt === currentListType) return false;
-          if (s.type === 'domain' && domainsMatch(s.domain, domain)) return true;
-          if (s.type === 'category') {
-            const otherDomains = categoryDefinitions[s.category] || [];
-            return otherDomains.some(d => domainsMatch(d, domain));
-          }
-          return false;
-        });
-      });
-      return hasDuplicates;
-    };
-
-    const hasCrossListConflictForSite = (site: BlockedSite, currentListType: 'blocklist' | 'greylist' | 'whitelist') => {
-      if (site.type === 'domain') {
-        return getDomainConflicts(site.domain, currentListType).length > 0;
-      }
-      const domains = categoryDefinitions[site.category] || [];
-      return domains.some(d => getDomainConflicts(d, currentListType).length > 0);
-    };
 
     return (
       <div className="border-2 border-zinc-900 bg-white">
@@ -484,8 +431,8 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                 const isExpanded = expandedCategories[site.id];
                 const includedDomains = site.type === 'category' ? categoryDefinitions[site.category] || [] : [];
                 const otherListType = type === 'blocklist' ? 'greylist' : 'blocklist';
-                const isConflict = hasCrossListConflictForSite(site, type);
-                const categoryHasDuplicates = site.type === 'category' ? getCategoryConflicts(site.category, type) : false;
+                const isConflict = hasSiteConflicts(site, type, blockedSites, categoryDefinitions);
+                const categoryHasDuplicates = site.type === 'category' ? categoryHasConflicts(site.category, type, blockedSites, categoryDefinitions) : false;
 
   return (
                 <React.Fragment key={site.id}>
@@ -507,9 +454,19 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                               <span className="uppercase tracking-tight cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 truncate max-w-[200px]" title={site.domain}>{site.domain}</span>
                               <button onClick={() => startEditing(site.id, site.domain, 'name')} className="opacity-0 group-hover/edit:opacity-100 text-zinc-400 hover:text-zinc-900 transition-opacity"><Pencil className="w-3 h-3" /></button>
                               {site.type === 'category' && !isExpanded && includedDomains.length > 0 && <span className="text-[10px] text-zinc-400 font-normal">({includedDomains.length} items)</span>}
-                              {site.type === 'category' && (categoryHasDuplicates || isConflict) && (
+                          {site.type === 'category' && (categoryHasDuplicates || isConflict) && (
                                 <AlertCircle className="w-3 h-3 text-red-500" title="This category contains domains that exist in other lists" />
                               )}
+                          {site.type === 'domain' && (() => {
+                            const conflicts = getDomainConflicts(site.domain, type, blockedSites, categoryDefinitions);
+                            const msg = buildConflictMessage(type, conflicts);
+                            return conflicts.length > 0 ? (
+                              <div className="flex items-center gap-1 text-red-500" title={msg}>
+                                <AlertCircle className="w-3 h-3" />
+                                <span className="text-[10px] font-bold uppercase tracking-tight">{msg}</span>
+                              </div>
+                            ) : null;
+                          })()}
                             </div>
                           )}
         </div>
@@ -520,12 +477,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                         {editingId === site.id && editingField === 'category' ? (
                             <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent font-mono text-xs uppercase w-full absolute inset-0 px-6 py-5 leading-none" autoFocus onBlur={() => saveEditing(site.id)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(site.id)}/>
                         ) : (
-                            <>
-                              <span onDoubleClick={() => startEditing(site.id, site.category, 'category')} className="text-xs font-mono text-zinc-600 uppercase cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 block w-full truncate max-w-[160px]" title={site.category}>{site.category}</span>
-                              {(categoryHasDuplicates || isConflict) && (
-                                <AlertCircle className="w-3 h-3 text-red-500" title="This category contains domains that exist in other lists" />
-                              )}
-                            </>
+                            <span onDoubleClick={() => startEditing(site.id, site.category, 'category')} className="text-xs font-mono text-zinc-600 uppercase cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 block w-full truncate max-w-[160px]" title={site.category}>{site.category}</span>
                         )}
                       </div>
                     </td>
@@ -534,26 +486,33 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                   {isExpanded && includedDomains.map((domain, index) => {
                       const innerKey = `inner-${site.category}-${domain}`;
                       const isEditingInner = editingId === innerKey;
-                      const domainConflicts = getDomainConflicts(domain, type);
+                      const domainConflicts = getDomainConflicts(domain, type, blockedSites, categoryDefinitions);
+                      const domainMessage = buildConflictMessage(type, domainConflicts);
                       return (
                           <tr key={innerKey} draggable="true" onDragStart={(e) => handleDragStart(e, domain, 'inner', { domain, parentCategory: site.category })} className="bg-zinc-50 group/item hover:bg-zinc-100 transition-colors">
-                              <td className="px-6 py-2 align-middle"><div className="flex items-center gap-3 pl-12"><CornerDownRight className="w-3 h-3 text-zinc-300" /><GripVertical className="w-3 h-3 text-zinc-300 cursor-grab active:cursor-grabbing opacity-0 group-hover/item:opacity-100 transition-opacity" />{isEditingInner ? <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent font-mono text-[10px] uppercase font-bold w-48 leading-none" autoFocus onBlur={() => saveEditing(domain, site.category)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(domain, site.category)} /> : <span onDoubleClick={() => startEditing(innerKey, domain, 'inner')} className="text-[10px] font-mono font-bold text-zinc-600 cursor-text hover:underline decoration-zinc-300 truncate max-w-[260px]" title={domain}>{domain}</span>}</div></td>
+                              <td className="px-6 py-2 align-middle">
+                                <div className="flex items-center gap-3 pl-12">
+                                  <CornerDownRight className="w-3 h-3 text-zinc-300" />
+                                  <GripVertical className="w-3 h-3 text-zinc-300 cursor-grab active:cursor-grabbing opacity-0 group-hover/item:opacity-100 transition-opacity" />
+                                  {isEditingInner ? (
+                                    <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent font-mono text-[10px] uppercase font-bold w-48 leading-none" autoFocus onBlur={() => saveEditing(domain, site.category)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(domain, site.category)} />
+                                  ) : (
+                                    <div className="flex items-center gap-2">
+                                      <span onDoubleClick={() => startEditing(innerKey, domain, 'inner')} className="text-[10px] font-mono font-bold text-zinc-600 cursor-text hover:underline decoration-zinc-300 truncate max-w-[260px]" title={domain}>{domain}</span>
+                                      {domainConflicts.length > 0 && (
+                                        <div className="flex items-center gap-1 text-red-500" title={domainMessage}>
+                                          <AlertCircle className="w-3 h-3" />
+                                          <span className="text-[10px] font-bold uppercase tracking-tight">{domainMessage}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-6 py-2 align-middle"><span className="text-[10px] text-zinc-400 font-mono uppercase">DOMAIN</span></td>
                               <td className="px-6 py-2 align-middle">
                                 <div className="flex items-center gap-2">
                                   <span className="text-[10px] text-zinc-300 font-mono uppercase">{site.category}</span>
-                              {domainConflicts.length > 0 && (
-                                    <div className="flex items-center gap-1 text-red-500" title={domainConflicts.map(c => `${c.listType.toUpperCase()}: ${c.category}`).join(', ')}>
-                                      <AlertCircle className="w-3 h-3" />
-                                      <span className="text-[10px] font-bold uppercase tracking-tight">
-                                        {domainConflicts[0].listType === 'blocklist'
-                                          ? 'BLOCKLIST OVERRIDES'
-                                          : domainConflicts[0].listType === 'greylist'
-                                          ? 'ALSO IN GREYLIST'
-                                          : 'ALSO IN WHITELIST'}
-                                      </span>
-                                    </div>
-                                  )}
                                 </div>
                               </td>
                               <td className="px-6 py-2 align-middle text-right"><button onClick={() => onRemoveFromCategory(site.id, domain)} className="text-zinc-300 hover:text-red-500 opacity-0 group-hover/item:opacity-100 transition-opacity"><X className="w-3 h-3 ml-auto" /></button></td>
@@ -771,6 +730,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                         <div className="flex flex-col">
                             <label className="text-[10px] font-bold uppercase text-zinc-500 mb-1">Doom Limit (Pages)</label>
                             <input type="number" min="1" max="100" value={settings.doomScrollLimit} onChange={(e) => onUpdateSettings({...settings, doomScrollLimit: Math.max(1, parseInt(e.target.value) || 3)})} className="w-20 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none" />
+                            <span className="text-[10px] text-zinc-400 font-mono mt-1">Number of screen-heights scrolled before alert.</span>
                         </div>
                         <button onClick={() => onUpdateSettings({...settings, showInjectedIcon: !settings.showInjectedIcon})} className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.showInjectedIcon ? 'bg-zinc-900' : 'bg-white'}`}><div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.showInjectedIcon ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} /></button>
                       </div>
@@ -824,6 +784,13 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
         )}
 
       </div>
+      <button
+        onClick={() => setActiveTab('settings')}
+        title="Open Config"
+        className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-zinc-900 text-white text-2xl font-bold shadow-[0_8px_24px_rgba(0,0,0,0.2)] hover:bg-zinc-700 transition-colors z-50 flex items-center justify-center"
+      >
+        ?
+      </button>
       </main>
     </div>
   );

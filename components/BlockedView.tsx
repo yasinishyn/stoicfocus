@@ -68,6 +68,8 @@ const BlockedView: React.FC<BlockedViewProps> = ({ domain, onReturn, mode = 'str
     }
   };
 
+  const displayDomain = domain.length > 64 ? `${domain.slice(0, 48)}…${domain.slice(-12)}` : domain;
+
   return (
     <div className="h-full overflow-y-auto bg-white flex flex-col items-center justify-center p-8 text-center animate-in fade-in duration-300 font-mono selection:bg-black selection:text-white">
       <div className="w-full max-w-4xl border-2 border-black p-8 md:p-16 relative my-auto">
@@ -87,7 +89,10 @@ const BlockedView: React.FC<BlockedViewProps> = ({ domain, onReturn, mode = 'str
                </span>
             </div>
             <h1 className="text-sm text-zinc-500 uppercase tracking-widest">
-              Access {mode === 'friction' ? 'Restricted' : 'Denied'}: <span className="text-black font-bold border-b-2 border-black">{domain}</span>
+              Access {mode === 'friction' ? 'Restricted' : 'Denied'}:{' '}
+              <span className="text-black font-bold border-b-2 border-black max-w-full inline-block truncate align-middle" title={domain}>
+                {displayDomain}
+              </span>
             </h1>
           </div>
 

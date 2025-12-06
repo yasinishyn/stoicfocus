@@ -36,7 +36,7 @@ const BlockedPage = () => {
         hardcoreMode: false,
         showInjectedIcon: true,
         soundEffects: true,
-        monochromeMode: true,
+        monochromeMode: false,
         mementoMoriEnabled: false,
         tabLimit: 5,
         doomScrollLimit: 3,
@@ -72,6 +72,15 @@ const BlockedPage = () => {
           tempUnlocked.push(currentDomain);
           await chrome.storage.local.set({ tempUnlocked });
         }
+        
+        // Track friction overcome metric
+        const metricsResult = await chrome.storage.local.get('metrics');
+        const currentMetrics = metricsResult.metrics || { interventions: 0, focusScore: 0, tabsWithered: 0, frictionOvercome: 0 };
+        const updatedMetrics = {
+          ...currentMetrics,
+          frictionOvercome: (currentMetrics.frictionOvercome || 0) + 1
+        };
+        await chrome.storage.local.set({ metrics: updatedMetrics });
         
         // Navigate to original URL
         window.location.href = domain;

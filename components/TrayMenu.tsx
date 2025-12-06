@@ -105,6 +105,14 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
   const [view, setView] = useState<'main' | 'premortem'>('main');
   const [preMortemInput, setPreMortemInput] = useState('');
 
+  const updatePomo = (updater: (p: PomodoroState) => PomodoroState) => {
+    setPomo(prev => {
+      const next = updater(prev);
+      chrome.storage.local.set({ pomo: next }).catch(() => {});
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (feedback) {
       const timer = setTimeout(() => {
@@ -114,6 +122,14 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
     }
   }, [feedback]);
 
+  const ensureBaseline = (prev: PomodoroState): PomodoroState => {
+    const mode = prev.mode || 'focus';
+    const duration = (mode === 'focus' ? settings.focusDuration : settings.breakDuration) * 60;
+    const timeLeft = typeof prev.timeLeft === 'number' && prev.timeLeft > 0 ? prev.timeLeft : duration;
+    const preMortemCaptured = prev.preMortemCaptured ?? false;
+    return { ...prev, mode, timeLeft, preMortemCaptured };
+  };
+
   const handleStartFlow = () => {
     if (pomo.isActive) {
       // Pause logic
@@ -122,21 +138,27 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
         setPuzzle(randomPuzzle);
         setPendingAction('pause');
       } else {
-        setPomo(prev => ({ ...prev, isActive: false }));
+        updatePomo(prev => ({ ...ensureBaseline(prev), isActive: false }));
       }
     } else {
       // Start logic
-      if (settings.negativeVisualization) {
+      if (settings.negativeVisualization && !(pomo.preMortemCaptured ?? false)) {
         setView('premortem');
       } else {
-        setPomo(prev => ({ ...prev, isActive: true }));
+        updatePomo(prev => {
+          const baseline = ensureBaseline(prev);
+          return { ...baseline, isActive: true };
+        });
       }
     }
   };
 
   const confirmStart = () => {
     setPreMortem(preMortemInput);
-    setPomo(prev => ({ ...prev, isActive: true }));
+    updatePomo(prev => {
+      const baseline = ensureBaseline(prev);
+      return { ...baseline, isActive: true, preMortemCaptured: true };
+    });
     setView('main');
     setPreMortemInput('');
   };
@@ -158,7 +180,7 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
   const handlePuzzleAnswer = (option: string) => {
     if (puzzle && option === puzzle.answer) {
       if (pendingAction === 'pause') {
-         setPomo(prev => ({ ...prev, isActive: false }));
+         updatePomo(prev => ({ ...prev, isActive: false }));
       } else if (pendingAction === 'disable') {
          onUpdateSettings({ ...settings, enabled: false });
       }

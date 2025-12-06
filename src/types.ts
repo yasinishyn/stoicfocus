@@ -28,6 +28,7 @@ export interface PomodoroState {
   isActive: boolean;
   mode: 'focus' | 'break';
   timeLeft: number; // in seconds
+  preMortemCaptured?: boolean; // whether negative visualization was provided for current focus session
 }
 
 export interface AppSettings {

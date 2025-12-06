@@ -21,6 +21,19 @@ const normalizeListType = (lt: string): 'blocklist' | 'greylist' | 'whitelist' =
 };
 
 const DashboardApp = () => {
+  const normalizeCategorySiteNames = (
+    sites: BlockedSite[],
+    cats: Record<string, string[]>
+  ): BlockedSite[] => {
+    return sites.map(site => {
+      if (site.type === 'category') {
+        const domains = cats[site.category] || [];
+        const first = domains[0] || site.domain;
+        return { ...site, domain: first };
+      }
+      return site;
+    });
+  };
   const [hasOnboarded, setHasOnboarded] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [settings, setSettings] = useState<AppSettings | null>(null);
@@ -49,7 +62,7 @@ const DashboardApp = () => {
         hardcoreMode: false,
         showInjectedIcon: true,
         soundEffects: true,
-        monochromeMode: true,
+        monochromeMode: false,
         mementoMoriEnabled: false,
         tabLimit: 5,
         doomScrollLimit: 3,
@@ -59,14 +72,6 @@ const DashboardApp = () => {
         negativeVisualization: true
       };
       setSettings(loadedSettings);
-      
-      // Load blocked sites
-      const sitesResult = await chrome.storage.sync.get('blockedSites');
-      const normalizedSites: BlockedSite[] = (sitesResult.blockedSites || []).map((s: any) => ({
-        ...s,
-        listType: normalizeListType(s.listType)
-      }));
-      setBlockedSites(normalizedSites);
       
       // Load category definitions
       const catResult = await chrome.storage.sync.get('categoryDefinitions');
@@ -79,6 +84,15 @@ const DashboardApp = () => {
       });
       setCategoryDefinitions(mergedCats);
       await chrome.storage.sync.set({ categoryDefinitions: mergedCats });
+
+      // Load blocked sites
+      const sitesResult = await chrome.storage.sync.get('blockedSites');
+      const normalizedSites: BlockedSite[] = (sitesResult.blockedSites || []).map((s: any) => ({
+        ...s,
+        listType: normalizeListType(s.listType)
+      }));
+      const nameFixedSites = normalizeCategorySiteNames(normalizedSites, mergedCats);
+      setBlockedSites(nameFixedSites);
       
       // Load metrics
       const metricsResult = await chrome.storage.local.get('metrics');
@@ -110,10 +124,20 @@ const DashboardApp = () => {
             ...s,
             listType: normalizeListType(s.listType)
           }));
-          setBlockedSites(normalizedSites);
+          const cats = changes.categoryDefinitions?.newValue || categoryDefinitions;
+          const nameFixedSites = normalizeCategorySiteNames(normalizedSites, cats);
+          setBlockedSites(nameFixedSites);
         }
         if (changes.categoryDefinitions && changes.categoryDefinitions.newValue !== undefined) {
-          setCategoryDefinitions(changes.categoryDefinitions.newValue || INITIAL_CATEGORIES);
+          const cats = { ...INITIAL_CATEGORIES, ...(changes.categoryDefinitions.newValue || {}) };
+          Object.keys(INITIAL_CATEGORIES).forEach(key => {
+            if (!cats[key] || cats[key].length === 0) {
+              cats[key] = INITIAL_CATEGORIES[key];
+            }
+          });
+          setCategoryDefinitions(cats);
+          // Also normalize site display names when categories change
+          setBlockedSites(prev => normalizeCategorySiteNames(prev, cats));
         }
         if (changes.settings && changes.settings.newValue !== undefined) {
           setSettings(changes.settings.newValue || null);
@@ -201,18 +225,42 @@ const DashboardApp = () => {
     const source = blockedSites.find(s => s.id === sourceId);
     const target = blockedSites.find(s => s.id === targetId);
     if (!source || !target) return;
-    
+
+    // If target is a category, just append the source domain(s)
+    if (target.type === 'category') {
+      const updatedCats = { ...categoryDefinitions };
+      const existing = new Set((updatedCats[target.category] || []).map(d => d.toLowerCase()));
+      if (source.type === 'domain') {
+        if (!existing.has(source.domain.toLowerCase())) {
+          updatedCats[target.category] = [...(updatedCats[target.category] || []), source.domain];
+        }
+      } else {
+        (categoryDefinitions[source.category] || []).forEach(d => {
+          if (!existing.has(d.toLowerCase())) {
+            updatedCats[target.category] = [...(updatedCats[target.category] || []), d];
+          }
+        });
+      }
+      const updatedSites = blockedSites.filter(s => s.id !== sourceId);
+      const normalizedSites = normalizeCategorySiteNames(updatedSites, updatedCats);
+      setCategoryDefinitions(updatedCats);
+      setBlockedSites(normalizedSites);
+      await chrome.storage.sync.set({ categoryDefinitions: updatedCats, blockedSites: normalizedSites });
+      return;
+    }
+
+    // If both are domains, create a new category containing both
     const newCategoryId = `custom-${Date.now()}`;
     const updated = {
       ...categoryDefinitions,
-      [newCategoryId]: [source.domain, target.domain]
+      [newCategoryId]: [target.domain, source.domain]
     };
     setCategoryDefinitions(updated);
     await chrome.storage.sync.set({ categoryDefinitions: updated });
     
     const newGroup: BlockedSite = {
       id: target.id,
-      domain: `${target.domain} & ${source.domain}`,
+      domain: updated[newCategoryId][0] || target.domain,
       type: 'category',
       category: newCategoryId,
       listType: target.listType,
@@ -220,8 +268,9 @@ const DashboardApp = () => {
     };
     
     const updatedSites = [...blockedSites.filter(s => s.id !== sourceId && s.id !== targetId), newGroup];
-    setBlockedSites(updatedSites);
-    await chrome.storage.sync.set({ blockedSites: updatedSites });
+    const normalizedSites = normalizeCategorySiteNames(updatedSites, updated);
+    setBlockedSites(normalizedSites);
+    await chrome.storage.sync.set({ blockedSites: normalizedSites, categoryDefinitions: updated });
   };
 
   const handleMoveInnerDomain = async (domain: string, fromCategory: string, targetId: string) => {
@@ -234,21 +283,27 @@ const DashboardApp = () => {
     if (target) {
       if (target.type === 'category') {
         updated[target.category] = [...(updated[target.category] || []), domain];
+        const normalizedSites = normalizeCategorySiteNames(blockedSites, updated);
+        setBlockedSites(normalizedSites);
+        await chrome.storage.sync.set({ blockedSites: normalizedSites, categoryDefinitions: updated });
+        return;
       } else {
         const newCategoryId = `custom-${Date.now()}`;
         updated[newCategoryId] = [target.domain, domain];
         
         const newGroup: BlockedSite = {
           id: target.id,
-          domain: target.domain,
+          domain: updated[newCategoryId][0] || target.domain,
           type: 'category',
           category: newCategoryId,
           listType: target.listType,
           redirectCount: target.redirectCount
         };
         const updatedSites = [...blockedSites.filter(s => s.id !== targetId), newGroup];
-        setBlockedSites(updatedSites);
-        await chrome.storage.sync.set({ blockedSites: updatedSites });
+        const normalizedSites = normalizeCategorySiteNames(updatedSites, updated);
+        setBlockedSites(normalizedSites);
+        await chrome.storage.sync.set({ blockedSites: normalizedSites, categoryDefinitions: updated });
+        return;
       }
     }
     

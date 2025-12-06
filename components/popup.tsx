@@ -12,7 +12,7 @@ const loadSettings = async (): Promise<AppSettings> => {
     hardcoreMode: false,
     showInjectedIcon: true,
     soundEffects: true,
-    monochromeMode: true,
+    monochromeMode: false,
     mementoMoriEnabled: false,
     tabLimit: 5,
     doomScrollLimit: 3,
@@ -25,7 +25,7 @@ const loadSettings = async (): Promise<AppSettings> => {
 
 const loadPomo = async (): Promise<PomodoroState> => {
   const result = await chrome.storage.local.get('pomo');
-  return result.pomo || { isActive: false, mode: 'focus', timeLeft: 25 * 60 };
+  return result.pomo || { isActive: false, mode: 'focus', timeLeft: 25 * 60, preMortemCaptured: false };
 };
 
 const loadPreMortem = async (): Promise<string> => {
@@ -60,6 +60,14 @@ const PopupApp = () => {
       setPreMortem(loadedPreMortem);
     };
     init();
+
+    const handleStorageChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, areaName: string) => {
+      if (areaName === 'local' && changes.pomo && changes.pomo.newValue) {
+        setPomo(changes.pomo.newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   }, []);
 
   const handleUpdateSettings = async (newSettings: AppSettings) => {
@@ -70,16 +78,31 @@ const PopupApp = () => {
   };
 
   const handleOpenPage = async (url: string) => {
+    // Map popup actions to dashboard targets
     if (url.startsWith('chrome://')) {
-      // Open dashboard in new tab
-      if (url.includes('boundaries') || url.includes('settings')) {
-        chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html' + (url.includes('settings') ? '#settings' : url.includes('greylist') ? '#greylist' : '')) });
+      const baseUrl = chrome.runtime.getURL('dashboard.html');
+      const targetUrl = (() => {
+        if (url.includes('settings')) return `${baseUrl}#settings`; // Config
+        if (url.includes('greylist')) return `${baseUrl}#greylist`;
+        return baseUrl; // Dashboard (blocklist)
+      })();
+
+      // Reuse existing StoicFocus dashboard tab if present
+      const existingTabs = await chrome.tabs.query({ url: `${baseUrl}*` });
+      if (existingTabs.length > 0) {
+        const tab = existingTabs[0];
+        await chrome.tabs.update(tab.id!, { url: targetUrl, active: true });
+        if (tab.windowId !== undefined) {
+          chrome.windows.update(tab.windowId, { focused: true });
+        }
       } else {
-        chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html') });
+        chrome.tabs.create({ url: targetUrl });
       }
-    } else {
-      chrome.tabs.create({ url });
+      return;
     }
+
+    // Fallback: open external link
+    chrome.tabs.create({ url });
   };
 
   const handleSetPomo = async (newPomo: PomodoroState) => {
