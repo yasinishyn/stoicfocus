@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, LabelList, Legend } from 'recharts';
-import { Trash2, Lock, Plus, CheckCircle2, Ban, BarChart3, Settings as SettingsIcon, Volume2, Power, MousePointerClick, Square, Globe, ChevronDown, ChevronRight, Folder, Download, ArrowUpRight, ArrowDownRight, ArrowRight, X, Pencil, Check, GripVertical, CornerDownRight, Zap, EyeOff, Layers, BookOpen, Feather, Sparkles, Clock, Scroll, Brain, AlertCircle, Coffee, HelpCircle } from 'lucide-react';
+import { Trash2, Lock, Plus, CheckCircle2, Ban, BarChart3, Settings as SettingsIcon, Volume2, Power, MousePointerClick, Square, Globe, ChevronDown, ChevronRight, Folder, Download, ArrowUpRight, ArrowDownRight, ArrowRight, X, Pencil, Check, GripVertical, CornerDownRight, Zap, EyeOff, Layers, BookOpen, Feather, Sparkles, Clock, Scroll, Brain, AlertCircle, Coffee } from 'lucide-react';
 import { BlockedSite, AppSettings, AppMetrics } from '../src/types';
 import { getRandomQuote } from '../services/staticQuotes';
 import { classifyDomain } from '../src/utils';
@@ -656,13 +656,6 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                     <h2 className="text-4xl font-bold uppercase tracking-tighter mb-2">Manual</h2>
                     <p className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Understanding the mechanism.</p>
                   </div>
-                  <button 
-                onClick={() => onRequestOnboarding && onRequestOnboarding()}
-                    className="mt-1 p-2 text-zinc-400 hover:text-zinc-900 transition-colors"
-                    title="Show onboarding tutorial"
-                  >
-                    <HelpCircle className="w-5 h-5" />
-                  </button>
                 </div>
               </header>
               <div className="border-2 border-zinc-900 bg-white divide-y-2 divide-zinc-900">
@@ -785,8 +778,8 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
 
       </div>
       <button
-        onClick={() => setActiveTab('settings')}
-        title="Open Config"
+        onClick={() => onRequestOnboarding && onRequestOnboarding()}
+        title="Open Help"
         className="fixed bottom-6 right-6 w-14 h-14 rounded-full bg-zinc-900 text-white text-2xl font-bold shadow-[0_8px_24px_rgba(0,0,0,0.2)] hover:bg-zinc-700 transition-colors z-50 flex items-center justify-center"
       >
         ?
