@@ -17,11 +17,17 @@ StoicFocus implements a multi-layered defense system against digital distraction
 ### Blocklist (Strict Block)
 **The Iron Curtain.** Sites added here are absolutely restricted during focus sessions. Any attempt to access them will result in an immediate redirect to a screen of Stoic wisdom. No exceptions, no workarounds.
 
+![Blocklist](./public/blocklist-page.png)
+
 ### Grey List (Friction Zone)
 A middle ground for necessary evils. Sites here aren't blocked outright but require a **"Typing Tax"**. To access them, you must perfectly type a difficult philosophical text, proving your intent is conscious, not impulsive.
 
+![Greylist](./public/greylist-page.png)
+
 ### Whitelist (Safe Passage)
 Trusted domains. StoicFocus will not apply friction, blocking, monochrome mode, or doom scroll detection to these sites.
+
+![Whitelist](./public/whitelist-page.png)
 
 ### Memento Mori Tabs
 Tabs are transient. If you exceed your limit (Default: 5), the oldest tab is automatically closed. Pinned tabs are safe. This feature reminds you that time is finite and every tab represents a commitment of attention.
@@ -32,6 +38,8 @@ Dopamine detox. During focus sessions, the entire internet is rendered in graysc
 ### Hardcore Focus
 To pause or disable protection, you must solve a chess puzzle. Incorrect answers lock you in. This feature ensures that disabling focus mode requires deliberate, conscious action.
 
+![Hardcore Focus Puzzle](./public/verify-intent-1.png)
+
 ### In-Page Blocker
 A floating **"BLOCK SITE"** button appears on every webpage, allowing for immediate boundary setting without opening the dashboard. Quick, decisive action when you recognize a distraction.
 
@@ -41,11 +49,39 @@ Automatically detects when you've scrolled beyond a reasonable limit (default: 3
 ### Time Boxing
 Customize your rhythm. Configure specific durations for Deep Work cycles and Rest phases to match your personal productivity flow. Built-in Pomodoro timer with visual progress.
 
+![Popup Timer](./public/popup-timer.png)
+
 ### AI Wisdom
 Optional Google Gemini integration generates context-aware Stoic quotes based specifically on the site you are trying to visit. Makes each intervention personally relevant.
 
 ### Negative Visualization
 Before every session, you must visualize why you might fail. If you visit a restricted site, your own prediction is shown back to you. This pre-mortem technique helps you anticipate and avoid failure.
+
+![Verify Intent](./public/verify-intent-2.png)
+
+### Settings & Manual
+
+- **System Config** (toggles for Hardcore, Monochrome, Doom Scroll limit, Time Boxing, etc.)
+  ![Config](./public/config-page.png)
+
+- **Manual** (all features explained in one place)
+  ![Manual](./public/manual-page.png)
+
+### Analytics
+
+- **Time Distribution & Focus Score** (real-time focused hours + score)
+  ![Analytics](./public/analytics-page.png)
+
+### Blocked Lists UI
+
+- **Blocklist categories & domains**
+  ![Blocklist](./public/blocklist-page.png)
+
+- **Greylist entries**
+  ![Greylist](./public/greylist-page.png)
+
+- **Whitelist entries**
+  ![Whitelist](./public/whitelist-page.png)
 
 ## Installation
 

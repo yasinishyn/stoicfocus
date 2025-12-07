@@ -348,6 +348,16 @@ chrome.storage.onChanged.addListener(async (changes) => {
       lastTrackedSecond = newPomo.timeLeft;
       startPomoTimer();
     }
+    // Focus -> break (still active): track focus time then continue
+    else if (oldPomo && oldPomo.isActive && oldPomo.mode === 'focus' && newPomo && newPomo.isActive && newPomo.mode === 'break') {
+      if (focusSessionStartTime) {
+        const sessionDuration = (Date.now() - focusSessionStartTime) / 1000;
+        await trackFocusTime(sessionDuration);
+        focusSessionStartTime = null;
+        lastTrackedSecond = 0;
+      }
+      startPomoTimer();
+    }
     // Session paused or stopped
     else if (oldPomo && oldPomo.isActive && oldPomo.mode === 'focus' && (!newPomo || !newPomo.isActive)) {
       if (focusSessionStartTime) {
@@ -364,6 +374,9 @@ chrome.storage.onChanged.addListener(async (changes) => {
     // Session resumed
     else if (newPomo && newPomo.isActive && (!oldPomo || !oldPomo.isActive)) {
       startPomoTimer();
+      if (newPomo.mode === 'focus' && !focusSessionStartTime) {
+        focusSessionStartTime = Date.now();
+      }
     }
   }
 });

@@ -3,7 +3,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, PieCha
 import { Trash2, Lock, Plus, CheckCircle2, Ban, BarChart3, Settings as SettingsIcon, Volume2, Power, MousePointerClick, Square, Globe, ChevronDown, ChevronRight, Folder, Download, ArrowUpRight, ArrowDownRight, ArrowRight, X, Pencil, Check, GripVertical, CornerDownRight, Zap, EyeOff, Layers, BookOpen, Feather, Sparkles, Clock, Scroll, Brain, AlertCircle, Coffee } from 'lucide-react';
 import { BlockedSite, AppSettings, AppMetrics } from '../src/types';
 import { getRandomQuote } from '../services/staticQuotes';
-import { classifyDomain } from '../src/utils';
+import { hashToTab, tabToHash } from '../src/tabHash';
 import { buildConflictMessage, categoryHasConflicts, getDomainConflicts, hasSiteConflicts } from '../src/conflictUtils';
 
 interface DashboardProps {
@@ -232,7 +232,14 @@ const Dashboard: React.FC<DashboardProps> = ({
   initialTab,
   onRequestOnboarding
 }) => {
-  const [activeTab, setActiveTab] = useState<Tab>(initialTab || 'dashboard');
+  // Initialize active tab from hash (if present) or prop, falling back to dashboard
+  const initialFromHash = (() => {
+    if (typeof window !== 'undefined') {
+      return hashToTab(window.location.hash) as Tab;
+    }
+    return (initialTab as Tab) || 'dashboard';
+  })();
+  const [activeTab, setActiveTab] = useState<Tab>(initialFromHash);
   const [blockMode, setBlockMode] = useState<BlockMode>('url');
   const [newDomain, setNewDomain] = useState('');
   const [groupCategory, setGroupCategory] = useState('social');
@@ -243,6 +250,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [editValue, setEditValue] = useState('');
   const [editingField, setEditingField] = useState<'name' | 'category' | 'inner'>('name');
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [focusScore, setFocusScore] = useState<number>(metrics.focusScore || 0);
   
   // Initialize distinct quotes for each tab
   const [blacklistQuote] = useState(() => getRandomQuote());
@@ -384,26 +392,84 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (err) { console.error("Drop Error", err); }
   };
 
-  const categoryData = useMemo(() => {
+  const domainBlockStats = useMemo(() => {
     const counts: Record<string, number> = {};
+    const add = (domain: string, val: number) => {
+      const key = domain.toLowerCase();
+      counts[key] = (counts[key] || 0) + (val || 0);
+    };
+
     blockedSites.forEach(site => {
-      if (site.listType === 'blocklist' || site.listType === 'blacklist') { // Only count blocklist for stats
-        if (site.type === 'domain') {
-           const semanticCategory = classifyDomain(site.domain);
-           counts[semanticCategory] = (counts[semanticCategory] || 0) + 1;
-        } else if (site.type === 'category') {
-           const domains = categoryDefinitions[site.category] || [];
-           domains.forEach(d => {
-              const semanticCategory = classifyDomain(d);
-              counts[semanticCategory] = (counts[semanticCategory] || 0) + 1;
-           });
-        }
+      const lt = site.listType === 'blacklist' ? 'blocklist' : site.listType;
+      if (lt !== 'blocklist') return;
+      if (site.type === 'domain') {
+        add(site.domain, site.redirectCount || 0);
+      } else {
+        const domains = categoryDefinitions[site.category] || [];
+        const val = site.redirectCount || 0;
+        domains.forEach(d => add(d, val));
       }
     });
-    return Object.keys(counts).map(key => ({ name: key, value: counts[key] }));
+
+    return Object.entries(counts)
+      .map(([domain, count]) => ({ domain, count }))
+      .sort((a, b) => b.count - a.count || a.domain.localeCompare(b.domain));
   }, [blockedSites, categoryDefinitions]);
 
-  const COLORS = ['#18181b', '#52525b', '#a1a1aa', '#e4e4e7'];
+  // Compute focus score based on last 7 days focused hours vs a 14h weekly goal (2h/day)
+  useEffect(() => {
+    const computeScore = (daily: Record<string, number>) => {
+      const dates = Object.keys(daily).sort();
+      const today = new Date();
+      const last7 = dates.filter((d) => {
+        const diff = (today.getTime() - new Date(d).getTime()) / (1000 * 60 * 60 * 24);
+        return diff <= 6; // include today and past 6 days
+      });
+      const hours = last7.reduce((acc, d) => acc + (daily[d] || 0), 0);
+      const goalHours = 14; // 2h/day over 7 days
+      const score = Math.max(0, Math.min(100, Math.round((hours / goalHours) * 100)));
+      setFocusScore(score);
+    };
+
+    const load = async () => {
+      try {
+        const res = await chrome.storage.local.get('dailyTimeData');
+        computeScore(res.dailyTimeData || {});
+      } catch {
+        // ignore
+      }
+    };
+    load();
+
+    const handleChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, area: string) => {
+      if (area === 'local' && changes.dailyTimeData) {
+        computeScore(changes.dailyTimeData.newValue || {});
+      }
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
+
+  // Update hash when tab changes
+  useEffect(() => {
+    const hash = tabToHash(activeTab as any);
+    if (typeof window !== 'undefined' && window.location.hash !== hash) {
+      window.location.hash = hash;
+    }
+  }, [activeTab]);
+
+  // Respond to hash changes (navigation / reload)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const next = hashToTab(window.location.hash) as Tab;
+      setActiveTab(next);
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('hashchange', handleHashChange);
+      return () => window.removeEventListener('hashchange', handleHashChange);
+    }
+    return () => {};
+  }, []);
 
   const NavItem = ({ tab, label, icon: Icon }: { tab: Tab, label: string, icon: any }) => (
     <button onClick={() => setActiveTab(tab)} className={`w-full flex items-center justify-between px-4 py-3 border-b border-zinc-900 transition-all duration-200 group ${activeTab === tab ? 'bg-zinc-900 text-white' : 'bg-white text-zinc-900 hover:bg-zinc-100'}`}>
@@ -635,15 +701,42 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                     <div className="flex items-center gap-2 mb-4 text-zinc-400"><Feather className="w-4 h-4" /><span className="text-[10px] uppercase tracking-widest font-bold">Friction Overcome</span></div>
                     <p className="text-5xl font-bold tracking-tighter">{metrics.frictionOvercome}</p>
                  </div>
-                 <div className="bg-zinc-900 text-white p-8 flex flex-col justify-center relative overflow-hidden group min-h-[160px]">
+                 <div className="bg-zinc-900 text-white p-8 flex flex-col justify-center relative overflow-hidden group min-h-[160px]" title="Focus Score = (Focused hours over last 7 days) / 14h goal (2h/day), capped at 100%">
                     <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     <div className="flex items-center gap-2 mb-4 text-zinc-400 relative z-10"><CheckCircle2 className="w-4 h-4" /><span className="text-[10px] uppercase tracking-widest font-bold">Focus Score</span></div>
-                    <p className="text-5xl font-bold tracking-tighter relative z-10">{metrics.focusScore}%</p>
+                    <p className="text-5xl font-bold tracking-tighter relative z-10">{focusScore}%</p>
                  </div>
                  
                  {/* Deep Details */}
-                 <div className="bg-white p-8 border-t-2 lg:border-r-2 border-zinc-900 min-h-[300px] col-span-1 md:col-span-2"><h3 className="text-[10px] font-bold text-zinc-400 mb-8 uppercase tracking-widest">Distraction Profile</h3><div className="w-full flex items-center justify-center" style={{ height: '256px', minHeight: '256px' }}>{categoryData.length > 0 ? (<ResponsiveContainer width="100%" height={256}><PieChart><Pie data={categoryData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={2} dataKey="value" nameKey="name">{categoryData.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />))}</Pie><Tooltip cursor={false} contentStyle={{ backgroundColor: '#000', color: '#fff', border: 'none', fontFamily: 'Space Mono', fontSize: '12px' }} itemStyle={{ color: '#fff' }} /><Legend layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontFamily: 'Space Mono', fontSize: '10px', textTransform: 'uppercase' }} /></PieChart></ResponsiveContainer>) : (<p className="text-sm text-zinc-300 font-mono uppercase">Insufficient Data</p>)}</div></div>
-                 <div className="bg-zinc-50 p-8 border-t-2 border-zinc-900 flex flex-col justify-center items-center text-center min-h-[300px] col-span-1 md:col-span-2"><p className="text-zinc-400 text-xs font-mono mb-4 uppercase">Most Frequent Block</p><p className="text-3xl font-bold uppercase tracking-tight">Twitter.com</p><p className="text-zinc-900 text-sm font-bold mt-2">42 Attempts</p></div>
+                 <div className="bg-white p-8 border-t-2 lg:border-r-2 border-zinc-900 min-h-[300px] col-span-1 md:col-span-2">
+                   <h3 className="text-[10px] font-bold text-zinc-400 mb-8 uppercase tracking-widest">Distraction Profile</h3>
+                   {domainBlockStats.length > 0 && domainBlockStats.some(d => d.count > 0) ? (
+                     <div className="space-y-3">
+                       {domainBlockStats.slice(0, 8).map((item, idx) => (
+                         <div key={item.domain} className="flex items-center justify-between border-b border-zinc-200 pb-2">
+                           <div className="flex items-center gap-3">
+                             <span className="text-xs font-mono text-zinc-400 w-6 text-right">{idx + 1}.</span>
+                             <span className="text-sm font-bold uppercase tracking-tight truncate max-w-[220px]" title={item.domain}>{item.domain}</span>
+                           </div>
+                           <span className="text-xs font-mono text-zinc-500">Blocked {item.count}x</span>
+                         </div>
+                       ))}
+                     </div>
+                   ) : (
+                     <p className="text-sm text-zinc-300 font-mono uppercase">Insufficient Data</p>
+                   )}
+                 </div>
+                 <div className="bg-zinc-50 p-8 border-t-2 border-zinc-900 flex flex-col justify-center items-center text-center min-h-[300px] col-span-1 md:col-span-2">
+                   <p className="text-zinc-400 text-xs font-mono mb-4 uppercase">Most Frequent Block</p>
+                   {domainBlockStats.length > 0 && domainBlockStats[0].count > 0 ? (
+                     <>
+                       <p className="text-3xl font-bold uppercase tracking-tight truncate max-w-[320px]" title={domainBlockStats[0].domain}>{domainBlockStats[0].domain}</p>
+                       <p className="text-zinc-900 text-sm font-bold mt-2">{domainBlockStats[0].count} Attempts</p>
+                     </>
+                   ) : (
+                     <p className="text-sm text-zinc-300 font-mono uppercase">Insufficient Data</p>
+                   )}
+                 </div>
               </div>
             </div>
           )}
@@ -670,6 +763,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                    { title: "Time Boxing", desc: "Customize your rhythm. Configure specific durations for Deep Work cycles and Rest phases to match your personal productivity flow.", icon: Clock },
                    { title: "AI Wisdom", desc: "Optional Google Gemini integration generates context-aware Stoic quotes based specifically on the site you are trying to visit.", icon: Sparkles },
                    { title: "Negative Visualization", desc: "Before every session, you must visualize why you might fail. If you visit a restricted site, your own prediction is shown back to you.", icon: EyeOff },
+                   { title: "Focus Score", desc: "Shows how much focused time you logged in the last 7 days versus a 14h goal (2h/day).", icon: CheckCircle2 },
                  ].map((feature, i) => (
                    <div key={i} className="p-8 flex gap-6">
                       <div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center shrink-0"><feature.icon className="w-6 h-6" /></div>

@@ -324,14 +324,14 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
       {/* Footer */}
       <div className="border-t-2 border-zinc-900 grid grid-cols-2 divide-x-2 divide-zinc-900">
         <button 
-          onClick={() => onOpenPage('chrome://boundaries')}
+          onClick={() => onOpenPage('dashboard')}
           className="h-10 flex items-center justify-center gap-2 hover:bg-zinc-100 transition-colors text-zinc-900"
         >
           <Ban className="w-3.5 h-3.5" />
           <span className="text-[10px] font-bold uppercase tracking-wide">Dashboard</span>
         </button>
         <button 
-          onClick={() => onOpenPage('chrome://boundaries#settings')}
+          onClick={() => onOpenPage('settings')}
           className="h-10 flex items-center justify-center gap-2 hover:bg-zinc-100 transition-colors text-zinc-900"
         >
           <Settings className="w-3.5 h-3.5" />

@@ -77,32 +77,25 @@ const PopupApp = () => {
     chrome.runtime.sendMessage({ type: 'SETTINGS_UPDATED', settings: newSettings });
   };
 
-  const handleOpenPage = async (url: string) => {
-    // Map popup actions to dashboard targets
-    if (url.startsWith('chrome://')) {
-      const baseUrl = chrome.runtime.getURL('dashboard.html');
-      const targetUrl = (() => {
-        if (url.includes('settings')) return `${baseUrl}#settings`; // Config
-        if (url.includes('greylist')) return `${baseUrl}#greylist`;
-        return baseUrl; // Dashboard (blocklist)
-      })();
+  const handleOpenPage = async (target: 'dashboard' | 'settings' | 'greylist') => {
+    const baseUrl = chrome.runtime.getURL('dashboard.html');
+    const targetUrl =
+      target === 'settings'
+        ? `${baseUrl}#settings`
+        : target === 'greylist'
+        ? `${baseUrl}#greylist`
+        : baseUrl;
 
-      // Reuse existing StoicFocus dashboard tab if present
-      const existingTabs = await chrome.tabs.query({ url: `${baseUrl}*` });
-      if (existingTabs.length > 0) {
-        const tab = existingTabs[0];
-        await chrome.tabs.update(tab.id!, { url: targetUrl, active: true });
-        if (tab.windowId !== undefined) {
-          chrome.windows.update(tab.windowId, { focused: true });
-        }
-      } else {
-        chrome.tabs.create({ url: targetUrl });
+    // Try to focus an existing dashboard tab; if none, create one at the correct hash
+    const existingTabs = await chrome.tabs.query({ url: baseUrl + '*' });
+    if (existingTabs.length > 0 && existingTabs[0].id !== undefined) {
+      await chrome.tabs.update(existingTabs[0].id, { url: targetUrl, active: true });
+      if (existingTabs[0].windowId !== undefined) {
+        await chrome.windows.update(existingTabs[0].windowId, { focused: true });
       }
-      return;
+    } else {
+      await chrome.tabs.create({ url: targetUrl });
     }
-
-    // Fallback: open external link
-    chrome.tabs.create({ url });
   };
 
   const handleSetPomo = async (newPomo: PomodoroState) => {
