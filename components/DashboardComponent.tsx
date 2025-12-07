@@ -4,6 +4,7 @@ import { Trash2, Lock, Plus, CheckCircle2, Ban, BarChart3, Settings as SettingsI
 import { BlockedSite, AppSettings, AppMetrics } from '../src/types';
 import { getRandomQuote } from '../services/staticQuotes';
 import { hashToTab, tabToHash } from '../src/tabHash';
+import { computeDomainBlockStats } from '../src/analyticsUtils';
 import { buildConflictMessage, categoryHasConflicts, getDomainConflicts, hasSiteConflicts } from '../src/conflictUtils';
 
 interface DashboardProps {
@@ -392,29 +393,12 @@ const Dashboard: React.FC<DashboardProps> = ({
     } catch (err) { console.error("Drop Error", err); }
   };
 
-  const domainBlockStats = useMemo(() => {
-    const counts: Record<string, number> = {};
-    const add = (domain: string, val: number) => {
-      const key = domain.toLowerCase();
-      counts[key] = (counts[key] || 0) + (val || 0);
-    };
+  const domainBlockStats = useMemo(
+    () => computeDomainBlockStats(blockedSites, categoryDefinitions),
+    [blockedSites, categoryDefinitions]
+  );
 
-    blockedSites.forEach(site => {
-      const lt = site.listType === 'blacklist' ? 'blocklist' : site.listType;
-      if (lt !== 'blocklist') return;
-      if (site.type === 'domain') {
-        add(site.domain, site.redirectCount || 0);
-      } else {
-        const domains = categoryDefinitions[site.category] || [];
-        const val = site.redirectCount || 0;
-        domains.forEach(d => add(d, val));
-      }
-    });
-
-    return Object.entries(counts)
-      .map(([domain, count]) => ({ domain, count }))
-      .sort((a, b) => b.count - a.count || a.domain.localeCompare(b.domain));
-  }, [blockedSites, categoryDefinitions]);
+  const COLORS = ['#18181b', '#52525b', '#a1a1aa', '#e4e4e7', '#d4d4d8', '#f5f5f5'];
 
   // Compute focus score based on last 7 days focused hours vs a 14h weekly goal (2h/day)
   useEffect(() => {
@@ -710,21 +694,38 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                  {/* Deep Details */}
                  <div className="bg-white p-8 border-t-2 lg:border-r-2 border-zinc-900 min-h-[300px] col-span-1 md:col-span-2">
                    <h3 className="text-[10px] font-bold text-zinc-400 mb-8 uppercase tracking-widest">Distraction Profile</h3>
-                   {domainBlockStats.length > 0 && domainBlockStats.some(d => d.count > 0) ? (
-                     <div className="space-y-3">
-                       {domainBlockStats.slice(0, 8).map((item, idx) => (
-                         <div key={item.domain} className="flex items-center justify-between border-b border-zinc-200 pb-2">
-                           <div className="flex items-center gap-3">
-                             <span className="text-xs font-mono text-zinc-400 w-6 text-right">{idx + 1}.</span>
-                             <span className="text-sm font-bold uppercase tracking-tight truncate max-w-[220px]" title={item.domain}>{item.domain}</span>
-                           </div>
-                           <span className="text-xs font-mono text-zinc-500">Blocked {item.count}x</span>
-                         </div>
-                       ))}
-                     </div>
-                   ) : (
-                     <p className="text-sm text-zinc-300 font-mono uppercase">Insufficient Data</p>
-                   )}
+                   <div className="w-full flex items-center justify-center" style={{ height: '256px', minHeight: '256px' }}>
+                     <ResponsiveContainer width="100%" height={256}>
+                       <PieChart>
+                         <Pie
+                           data={domainBlockStats.length > 0 ? domainBlockStats.slice(0, 8) : [{ domain: 'No data', count: 1 }]}
+                           dataKey="count"
+                           nameKey="domain"
+                           cx="50%"
+                           cy="50%"
+                           innerRadius={60}
+                           outerRadius={85}
+                           paddingAngle={2}
+                         >
+                           {(domainBlockStats.length > 0 ? domainBlockStats.slice(0, 8) : [{ domain: 'No data', count: 1 }]).map((entry, index) => (
+                             <Cell key={`cell-${entry.domain}-${index}`} fill={COLORS[index % COLORS.length]} stroke="none" />
+                           ))}
+                         </Pie>
+                         <Tooltip
+                           cursor={false}
+                           contentStyle={{ backgroundColor: '#000', color: '#fff', border: 'none', fontFamily: 'Space Mono', fontSize: '12px' }}
+                           itemStyle={{ color: '#fff' }}
+                           formatter={(value: number, name: string) => [`${value} blocks`, name]}
+                         />
+                         <Legend
+                           layout="vertical"
+                           verticalAlign="middle"
+                           align="right"
+                           wrapperStyle={{ fontFamily: 'Space Mono', fontSize: '10px', textTransform: 'uppercase' }}
+                         />
+                       </PieChart>
+                     </ResponsiveContainer>
+                   </div>
                  </div>
                  <div className="bg-zinc-50 p-8 border-t-2 border-zinc-900 flex flex-col justify-center items-center text-center min-h-[300px] col-span-1 md:col-span-2">
                    <p className="text-zinc-400 text-xs font-mono mb-4 uppercase">Most Frequent Block</p>
