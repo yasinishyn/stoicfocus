@@ -7,6 +7,20 @@ import { hashToTab, tabToHash } from '../src/tabHash';
 import { computeDomainBlockStats } from '../src/analyticsUtils';
 import { buildConflictMessage, categoryHasConflicts, getDomainConflicts, hasSiteConflicts } from '../src/conflictUtils';
 
+export const CATEGORY_LABELS: Record<string, string> = {
+  social: 'Social Media',
+  news: 'News & Media',
+  shopping: 'Shopping',
+  entertainment: 'Entertainment',
+  custom: 'Custom',
+};
+
+export const getCategoryLabel = (key: string, cats: Record<string, string[]>): string => {
+  if (CATEGORY_LABELS[key]) return CATEGORY_LABELS[key];
+  const domains = cats[key] || [];
+  return domains[0] || key;
+};
+
 interface DashboardProps {
   blockedSites: BlockedSite[];
   stats: { name: string; value: number }[];
@@ -483,6 +497,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                 const otherListType = type === 'blocklist' ? 'greylist' : 'blocklist';
                 const isConflict = hasSiteConflicts(site, type, blockedSites, categoryDefinitions);
                 const categoryHasDuplicates = site.type === 'category' ? categoryHasConflicts(site.category, type, blockedSites, categoryDefinitions) : false;
+                const displayName = site.type === 'category' ? getCategoryLabel(site.category, categoryDefinitions) : site.domain;
 
   return (
                 <React.Fragment key={site.id}>
@@ -501,7 +516,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                             <div className="flex items-center gap-2 flex-1"><input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent uppercase font-bold text-sm w-full leading-none" autoFocus onBlur={() => saveEditing(site.id)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(site.id)}/><button onMouseDown={(e) => e.preventDefault()} onClick={() => saveEditing(site.id)} className="text-zinc-900 hover:text-emerald-600"><Check className="w-4 h-4" /></button></div>
                           ) : (
                             <div className="flex items-center gap-2 group/edit" onDoubleClick={() => startEditing(site.id, site.domain, 'name')}>
-                              <span className="uppercase tracking-tight cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 truncate max-w-[200px]" title={site.domain}>{site.domain}</span>
+                              <span className="uppercase tracking-tight cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 truncate max-w-[200px]" title={displayName}>{displayName}</span>
                               <button onClick={() => startEditing(site.id, site.domain, 'name')} className="opacity-0 group-hover/edit:opacity-100 text-zinc-400 hover:text-zinc-900 transition-opacity"><Pencil className="w-3 h-3" /></button>
                               {site.type === 'category' && !isExpanded && includedDomains.length > 0 && <span className="text-[10px] text-zinc-400 font-normal">({includedDomains.length} items)</span>}
                           {site.type === 'category' && (categoryHasDuplicates || isConflict) && (
