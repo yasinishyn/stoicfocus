@@ -277,6 +277,7 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [editingField, setEditingField] = useState<'name' | 'category' | 'inner'>('name');
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [focusScore, setFocusScore] = useState<number>(metrics.focusScore || 0);
+  const [domainCounts, setDomainCounts] = useState<Record<string, number>>({});
   
   // Initialize distinct quotes for each tab
   const [blacklistQuote] = useState(() => getRandomQuote());
@@ -419,8 +420,8 @@ const Dashboard: React.FC<DashboardProps> = ({
   };
 
   const domainBlockStats = useMemo(
-    () => computeDomainBlockStats(blockedSites, categoryDefinitions),
-    [blockedSites, categoryDefinitions]
+    () => computeDomainBlockStats(blockedSites, categoryDefinitions, domainCounts),
+    [blockedSites, categoryDefinitions, domainCounts]
   );
 
   const COLORS = ['#18181b', '#52525b', '#a1a1aa', '#e4e4e7', '#d4d4d8', '#f5f5f5'];
@@ -453,6 +454,27 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, area: string) => {
       if (area === 'local' && changes.dailyTimeData) {
         computeScore(changes.dailyTimeData.newValue || {});
+      }
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
+
+  // Load domain redirect counts
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await chrome.storage.local.get('domainRedirectCounts');
+        setDomainCounts(res.domainRedirectCounts || {});
+      } catch {
+        // ignore
+      }
+    };
+    load();
+
+    const handleChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, area: string) => {
+      if (area === 'local' && changes.domainRedirectCounts) {
+        setDomainCounts(changes.domainRedirectCounts.newValue || {});
       }
     };
     chrome.storage.onChanged.addListener(handleChange);

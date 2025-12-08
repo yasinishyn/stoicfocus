@@ -64,5 +64,29 @@ describe('computeDomainBlockStats', () => {
     const stats = computeDomainBlockStats(sites, {});
     expect(stats).toEqual([]);
   });
+
+  it('prefers per-domain counts when provided', () => {
+    const sites: BlockedSite[] = [
+      makeDomain('a.com', 'blocklist', 10), // should be ignored in favor of domainCounts
+      makeCategory('social', 'blocklist', 5),
+    ];
+    const cats = { social: ['x.com', 'y.com'] };
+    const domainCounts = { 'x.com': 2, 'a.com': 1 };
+    const stats = computeDomainBlockStats(sites, cats, domainCounts);
+    expect(stats).toEqual([
+      { domain: 'x.com', count: 2 },
+      { domain: 'a.com', count: 1 },
+    ]);
+  });
+
+  it('when domainCounts provided, category domains without counts stay zero/absent', () => {
+    const sites: BlockedSite[] = [
+      makeCategory('social', 'blocklist', 50), // would have inflated all domains
+    ];
+    const cats = { social: ['x.com', 'y.com'] };
+    const domainCounts = { 'x.com': 3 }; // only x.com should appear
+    const stats = computeDomainBlockStats(sites, cats, domainCounts);
+    expect(stats).toEqual([{ domain: 'x.com', count: 3 }]);
+  });
 });
 

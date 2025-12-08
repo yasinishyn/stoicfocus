@@ -63,7 +63,7 @@ const getDomain = (url: string): string => {
 };
 
 // Check if URL matches blocked site
-const isBlocked = (url: string, blockedSites: BlockedSite[], categoryDefinitions: CategoryDefinitions): { blocked: boolean; listType: 'blocklist' | 'greylist' | 'whitelist' | null } => {
+const isBlocked = (url: string, blockedSites: BlockedSite[], categoryDefinitions: CategoryDefinitions): { blocked: boolean; listType: 'blocklist' | 'greylist' | 'whitelist' | null; matchedDomain?: string } => {
   const domain = getDomain(url).toLowerCase();
   const matches = (checker: string) => {
     try {
@@ -78,13 +78,22 @@ const isBlocked = (url: string, blockedSites: BlockedSite[], categoryDefinitions
   let inBlock = false;
   let inGrey = false;
   let inWhite = false;
+  let matchedDomain: string | undefined;
 
   for (const site of blockedSites) {
     const listType = (site as any).listType === 'blacklist' ? 'blocklist' : site.listType;
     const matched = (() => {
-      if (site.type === 'domain') return matches(site.domain);
+      if (site.type === 'domain') {
+        if (matches(site.domain)) {
+          matchedDomain = site.domain;
+          return true;
+        }
+        return false;
+      }
       const domains = categoryDefinitions[site.category] || [];
-      return domains.some(d => matches(d));
+      const hit = domains.find(d => matches(d));
+      if (hit) matchedDomain = hit;
+      return !!hit;
     })();
 
     if (!matched) continue;
@@ -93,10 +102,10 @@ const isBlocked = (url: string, blockedSites: BlockedSite[], categoryDefinitions
     else if (listType === 'whitelist') inWhite = true;
   }
 
-  if (inBlock) return { blocked: true, listType: 'blocklist' };
-  if (inGrey) return { blocked: true, listType: 'greylist' };
-  if (inWhite) return { blocked: false, listType: 'whitelist' };
-  return { blocked: false, listType: null };
+  if (inBlock) return { blocked: true, listType: 'blocklist', matchedDomain };
+  if (inGrey) return { blocked: true, listType: 'greylist', matchedDomain };
+  if (inWhite) return { blocked: false, listType: 'whitelist', matchedDomain };
+  return { blocked: false, listType: null, matchedDomain };
 };
 
 // Handle tab updates - check for blocked sites
@@ -116,7 +125,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   // Skip chrome:// and extension pages
   if (tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) return;
   
-  const { blocked, listType } = isBlocked(tab.url, blockedSites, categoryDefinitions);
+  const { blocked, listType, matchedDomain } = isBlocked(tab.url, blockedSites, categoryDefinitions);
   
   if (listType === 'whitelist') return;
 
@@ -138,6 +147,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (site) {
       site.redirectCount = (site.redirectCount || 0) + 1;
       await chrome.storage.sync.set({ blockedSites });
+    }
+    if (matchedDomain) {
+      await incrementDomainRedirectCount(matchedDomain.toLowerCase());
     }
       
       // Update intervention metric
@@ -380,6 +392,14 @@ chrome.storage.onChanged.addListener(async (changes) => {
     }
   }
 });
+
+// Helper to increment per-domain redirect counts
+const incrementDomainRedirectCount = async (domain: string) => {
+  const res = await chrome.storage.local.get('domainRedirectCounts');
+  const counts: Record<string, number> = res.domainRedirectCounts || {};
+  counts[domain] = (counts[domain] || 0) + 1;
+  await chrome.storage.local.set({ domainRedirectCounts: counts });
+};
 
 // Helper to block a domain
 const blockDomain = async (domain: string) => {
