@@ -39,7 +39,8 @@ const BlockedView: React.FC<BlockedViewProps> = ({ domain, onReturn, mode = 'str
     fetchQuote();
 
     if (mode === 'friction') {
-      setChallengeText(getRandomText());
+      const q = getRandomQuote();
+      setChallengeText(q.text);
     }
   }, [mode, domain, settings.geminiApiKey]);
 
