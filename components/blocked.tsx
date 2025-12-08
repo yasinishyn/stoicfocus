@@ -43,7 +43,8 @@ const BlockedPage = () => {
         geminiApiKey: '',
         focusDuration: 25,
         breakDuration: 5,
-        negativeVisualization: true
+        negativeVisualization: true,
+        frictionDurationMinutes: 10
       });
       
       // Load pre-mortem
@@ -65,13 +66,16 @@ const BlockedPage = () => {
         const url = new URL(domain);
         const currentDomain = url.hostname.replace('www.', '').toLowerCase();
         
-        // Add to temp unlocked
+        // Add to temp unlocked with expiry
         const result = await chrome.storage.local.get('tempUnlocked');
-        const tempUnlocked = result.tempUnlocked || [];
-        if (!tempUnlocked.includes(currentDomain)) {
-          tempUnlocked.push(currentDomain);
-          await chrome.storage.local.set({ tempUnlocked });
-        }
+        let tempUnlocked = result.tempUnlocked || [];
+        if (!Array.isArray(tempUnlocked)) tempUnlocked = [];
+        const settingsResult = await chrome.storage.sync.get('settings');
+        const frictionMinutes = (settingsResult.settings && settingsResult.settings.frictionDurationMinutes) || 10;
+        const expiresAt = Date.now() + frictionMinutes * 60 * 1000;
+        tempUnlocked = tempUnlocked.filter((entry: any) => entry && entry.domain !== currentDomain);
+        tempUnlocked.push({ domain: currentDomain, expiresAt });
+        await chrome.storage.local.set({ tempUnlocked });
         
         // Track friction overcome metric
         const metricsResult = await chrome.storage.local.get('metrics');

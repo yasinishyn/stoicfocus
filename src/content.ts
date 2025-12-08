@@ -1,4 +1,5 @@
 // Content Script for StoicFocus Extension
+import { safeStorageLocalSet } from './storageHelpers';
 
 interface AppSettings {
   enabled: boolean;
@@ -54,7 +55,7 @@ const safeStorageLocalGet = async (keys: string | string[]): Promise<any> => {
   try {
     return await chrome.storage.local.get(keys);
   } catch (e) {
-    if (e.message && e.message.includes('Extension context invalidated')) {
+    if ((e as any).message && (e as any).message.includes('Extension context invalidated')) {
       return {};
     }
     throw e;
@@ -90,12 +91,20 @@ const safeRuntimeGetURL = (path: string): string => {
 const loadSettings = async (): Promise<AppSettings> => {
   try {
     const result = await safeStorageGet('settings');
-    return result.settings || {
-      enabled: true,
-      showInjectedIcon: true,
-      doomScrollLimit: 3,
+  return result.settings || {
+    enabled: true,
+    showInjectedIcon: true,
+    doomScrollLimit: 3,
       monochromeMode: false,
-      mementoMoriEnabled: false
+      mementoMoriEnabled: false,
+      frictionDurationMinutes: 10,
+      hardcoreMode: false,
+      focusDuration: 25,
+      breakDuration: 5,
+      negativeVisualization: true,
+      soundEffects: true,
+      tabLimit: 5,
+      geminiApiKey: ''
     };
   } catch (e) {
     // Return defaults if error
@@ -104,7 +113,15 @@ const loadSettings = async (): Promise<AppSettings> => {
       showInjectedIcon: true,
       doomScrollLimit: 3,
       monochromeMode: false,
-      mementoMoriEnabled: false
+      mementoMoriEnabled: false,
+      frictionDurationMinutes: 10,
+      hardcoreMode: false,
+      focusDuration: 25,
+      breakDuration: 5,
+      negativeVisualization: true,
+      soundEffects: true,
+      tabLimit: 5,
+      geminiApiKey: ''
     };
   }
 };
@@ -117,10 +134,10 @@ const loadBlockedSites = async (): Promise<{ blockedSites: BlockedSite[]; catego
       const lt = s.listType === 'blacklist' ? 'blocklist' : s.listType;
       return { ...s, listType: lt } as BlockedSite;
     });
-    return {
+  return {
       blockedSites: normalizedSites,
-      categoryDefinitions: result.categoryDefinitions || {}
-    };
+    categoryDefinitions: result.categoryDefinitions || {}
+  };
   } catch (e) {
     return {
       blockedSites: [],
@@ -235,12 +252,12 @@ const createBlockButton = (): HTMLElement => {
           if (blockedUrl) {
             window.location.href = blockedUrl;
           } else {
-            window.location.reload();
+          window.location.reload();
           }
         }
       } catch (e) {
         if (e.message && !e.message.includes('Extension context invalidated')) {
-          console.error('Error blocking site:', e);
+        console.error('Error blocking site:', e);
         }
       }
     });
@@ -515,9 +532,9 @@ const applyMonochrome = async (immediate = false) => {
       return;
     }
 
-    const settings = await loadSettings();
-    
-    if (settings.enabled && settings.monochromeMode) {
+  const settings = await loadSettings();
+  
+  if (settings.enabled && settings.monochromeMode) {
       ensureFixedStyles();
 
       // If already applied and not forced, keep
@@ -634,21 +651,34 @@ const init = async () => {
   // Check for greylist and show typing tax if needed
   const { blockedSites, categoryDefinitions } = await loadBlockedSites();
   const currentDomain = window.location.hostname.replace('www.', '').toLowerCase();
-  
   const { inBlock, inGrey, inWhite } = computeListFlags(blockedSites, categoryDefinitions, currentDomain);
   isWhitelisted = inWhite && !inBlock && !inGrey;
 
   if (inGrey && !inBlock && !isWhitelisted) {
     try {
-      // Check if temporarily unlocked
+    // Check if temporarily unlocked
       const unlocked = await safeStorageLocalGet('tempUnlocked');
-      const tempUnlocked = unlocked.tempUnlocked || [];
-      
-      if (!tempUnlocked.includes(currentDomain)) {
-        // Redirect to typing tax page
+      const now = Date.now();
+      let tempUnlocked = unlocked.tempUnlocked || [];
+      if (Array.isArray(tempUnlocked)) {
+        // support legacy array of strings
+        if (tempUnlocked.length > 0 && typeof tempUnlocked[0] === 'string') {
+          tempUnlocked = tempUnlocked.map((d: string) => ({ domain: d, expiresAt: 0 }));
+        }
+      } else {
+        tempUnlocked = [];
+      }
+      const filtered = tempUnlocked.filter((entry: any) => entry && entry.expiresAt > now);
+      if (filtered.length !== tempUnlocked.length) {
+        await safeStorageLocalSet({ tempUnlocked: filtered });
+      }
+
+      const found = filtered.some((entry: any) => domainsMatch(entry.domain, currentDomain));
+      if (!found) {
+      // Redirect to typing tax page
         const blockedUrl = safeRuntimeGetURL(`blocked.html?url=${encodeURIComponent(window.location.href)}&mode=friction`);
         if (blockedUrl) {
-          window.location.href = blockedUrl;
+      window.location.href = blockedUrl;
         }
       }
     } catch (e) {
@@ -663,9 +693,9 @@ const init = async () => {
 // Listen for settings changes
 if (isExtensionContextValid()) {
   try {
-    chrome.runtime.onMessage.addListener((message) => {
-      if (message.type === 'SETTINGS_CHANGED') {
-        // Apply new settings without reload
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type === 'SETTINGS_CHANGED') {
+    // Apply new settings without reload
         monochromeApplied = false;
         ensureBlockButton();
         applyMonochrome(false);

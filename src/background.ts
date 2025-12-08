@@ -41,7 +41,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   geminiApiKey: '',
   focusDuration: 25,
   breakDuration: 5,
-  negativeVisualization: true
+  negativeVisualization: true,
+  frictionDurationMinutes: 10
 };
 
 const DEFAULT_CATEGORIES: CategoryDefinitions = {

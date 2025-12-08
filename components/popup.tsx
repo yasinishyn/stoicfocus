@@ -19,7 +19,8 @@ const loadSettings = async (): Promise<AppSettings> => {
     geminiApiKey: '',
     focusDuration: 25,
     breakDuration: 5,
-    negativeVisualization: true
+    negativeVisualization: true,
+    frictionDurationMinutes: 10
   };
 };
 

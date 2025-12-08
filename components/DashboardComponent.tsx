@@ -6,6 +6,7 @@ import { getRandomQuote } from '../services/staticQuotes';
 import { hashToTab, tabToHash } from '../src/tabHash';
 import { computeDomainBlockStats } from '../src/analyticsUtils';
 import { buildConflictMessage, categoryHasConflicts, getDomainConflicts, hasSiteConflicts } from '../src/conflictUtils';
+import { normalizeDomainValue } from '../src/domainUtils';
 
 export const CATEGORY_LABELS: Record<string, string> = {
   social: 'Social Media',
@@ -309,15 +310,16 @@ const Dashboard: React.FC<DashboardProps> = ({
         setFormError('Enter a valid domain (example.com)');
         return;
       }
+      const normalizedDomain = normalizeDomainValue(domainToAdd);
       
       // Validation: Check if domain already exists in the current list
-      const exists = currentList.some(s => s.type === 'domain' && s.domain.toLowerCase() === domainToAdd.toLowerCase());
+      const exists = currentList.some(s => s.type === 'domain' && s.domain.toLowerCase() === normalizedDomain);
       if (exists) {
           setFormError('Already in list');
           return;
       }
       const categoryToUse = urlCategoryOverride !== 'auto' ? urlCategoryOverride : undefined;
-      addSite(domainToAdd, 'domain', listType, categoryToUse);
+      addSite(normalizedDomain, 'domain', listType, categoryToUse);
       setNewDomain('');
       setUrlCategoryOverride('auto');
     } else {
@@ -475,7 +477,7 @@ const Dashboard: React.FC<DashboardProps> = ({
     const handleChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, area: string) => {
       if (area === 'local' && changes.domainRedirectCounts) {
         setDomainCounts(changes.domainRedirectCounts.newValue || {});
-      }
+        }
     };
     chrome.storage.onChanged.addListener(handleChange);
     return () => chrome.storage.onChanged.removeListener(handleChange);
@@ -560,9 +562,9 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                             const msg = buildConflictMessage(type, conflicts);
                             return conflicts.length > 0 ? (
                               <div className="flex items-center gap-1 text-red-500" title={msg}>
-                                <AlertCircle className="w-3 h-3" />
+                                  <AlertCircle className="w-3 h-3" />
                                 <span className="text-[10px] font-bold uppercase tracking-tight">{msg}</span>
-                              </div>
+                                </div>
                             ) : null;
                           })()}
                             </div>
@@ -572,11 +574,11 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                     <td className="px-6 py-5 align-top"><span className="inline-block border border-zinc-900 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">{site.type}</span></td>
                     <td className="px-6 py-5 align-top relative">
                       <div className="flex items-center gap-2">
-                        {editingId === site.id && editingField === 'category' ? (
-                            <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent font-mono text-xs uppercase w-full absolute inset-0 px-6 py-5 leading-none" autoFocus onBlur={() => saveEditing(site.id)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(site.id)}/>
-                        ) : (
+                      {editingId === site.id && editingField === 'category' ? (
+                          <input type="text" value={editValue} onChange={(e) => setEditValue(e.target.value)} className="border-none p-0 focus:outline-none focus:ring-0 bg-transparent font-mono text-xs uppercase w-full absolute inset-0 px-6 py-5 leading-none" autoFocus onBlur={() => saveEditing(site.id)} onKeyDown={(e) => e.key === 'Enter' && saveEditing(site.id)}/>
+                      ) : (
                             <span onDoubleClick={() => startEditing(site.id, site.category, 'category')} className="text-xs font-mono text-zinc-600 uppercase cursor-text hover:underline decoration-zinc-400/50 underline-offset-4 block w-full truncate max-w-[160px]" title={site.category}>{site.category}</span>
-                        )}
+                      )}
                       </div>
                     </td>
                     <td className="px-6 py-5 text-right align-top"><button onClick={() => removeSite(site.id)} className="text-zinc-400 hover:text-red-600 transition-colors"><Trash2 className="w-4 h-4 ml-auto" /></button></td>
@@ -669,15 +671,15 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
         
         <nav className="flex-1 overflow-y-auto min-h-0">
           <NavItem tab="dashboard" label="Blocklist" icon={Ban} />
-          <NavItem tab="greylist" label="Grey List" icon={Feather} />
+            <NavItem tab="greylist" label="Grey List" icon={Feather} />
           <NavItem tab="whitelist" label="Whitelist" icon={Square} />
-          <NavItem tab="analytics" label="Analytics" icon={BarChart3} />
+            <NavItem tab="analytics" label="Analytics" icon={BarChart3} />
         </nav>
-        
+            
         <div className="mt-auto shrink-0 border-t border-zinc-900">
-          <NavItem tab="manual" label="Manual" icon={BookOpen} />
-          <NavItem tab="settings" label="Config" icon={SettingsIcon} />
-        </div>
+              <NavItem tab="manual" label="Manual" icon={BookOpen} />
+              <NavItem tab="settings" label="Config" icon={SettingsIcon} />
+            </div>
         
         <div className="p-6 border-t border-zinc-900 shrink-0">
            <div className="flex items-center justify-between mb-2"><span className="text-[10px] uppercase tracking-widest text-zinc-500">System Status</span><div className={`w-2 h-2 rounded-full ${settings.enabled ? 'bg-emerald-500' : 'bg-red-500'}`}></div></div>
@@ -904,6 +906,15 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                         </div>
                       </div>
                    </div>
+                     <div className="p-8 border-b border-zinc-200 flex items-center justify-between hover:bg-zinc-50 transition-colors">
+                        <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><MousePointerClick className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Friction Unlock Duration</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Minutes a greylist unlock stays valid</p></div></div>
+                        <div className="flex items-center gap-4">
+                          <div className="flex flex-col">
+                            <label className="text-[10px] font-bold uppercase text-zinc-500 mb-1">Minutes</label>
+                            <input type="number" min="1" max="180" value={settings.frictionDurationMinutes || 10} onChange={(e) => onUpdateSettings({...settings, frictionDurationMinutes: Math.max(1, parseInt(e.target.value) || 10)})} className="w-24 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none" />
+                          </div>
+                        </div>
+                     </div>
                    {/* AI CONFIG */}
                    <div className="p-8 flex items-center justify-between hover:bg-zinc-50 transition-colors">
                       <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><Sparkles className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Gemini Integration</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Context-aware Stoic quotes (Optional)</p></div></div>

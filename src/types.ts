@@ -44,6 +44,7 @@ export interface AppSettings {
   focusDuration: number; // in minutes
   breakDuration: number; // in minutes
   negativeVisualization: boolean; // Configurable pre-mortem
+  frictionDurationMinutes?: number; // How long greylist friction stays unlocked
 }
 
 export interface AppMetrics {
