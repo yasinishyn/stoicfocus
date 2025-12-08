@@ -70,8 +70,17 @@ const FocusChartCard = React.memo(() => {
   const [isWeekSelectorOpen, setIsWeekSelectorOpen] = useState(false);
   const [availableWeeks, setAvailableWeeks] = useState<Array<{ label: string; value: number }>>([]);
   const [chartData, setChartData] = useState<Array<{ name: string; value: number }>>([]);
-  const [totalHours, setTotalHours] = useState(0);
+  const [totalMinutes, setTotalMinutes] = useState(0);
   const [trend, setTrend] = useState(0);
+
+  const formatHoursMinutes = (hours: number) => {
+    const minutes = Math.round(hours * 60);
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (h > 0 && m > 0) return `${h}h ${m}m`;
+    if (h > 0) return `${h}h`;
+    return `${m}m`;
+  };
 
   // Load time data and generate week options
   useEffect(() => {
@@ -126,7 +135,8 @@ const FocusChartCard = React.memo(() => {
           day.setDate(weekStart.getDate() + (i === 0 ? 0 : i));
           const dateStr = day.toISOString().split('T')[0];
           const hours = dailyTimeData[dateStr] || 0;
-          weekData.push({ name: dayNames[day.getDay()], value: Math.round(hours * 10) / 10 });
+          const minutesRounded = Math.round(hours * 60);
+          weekData.push({ name: dayNames[day.getDay()], value: minutesRounded / 60 });
         }
         
         return weekData;
@@ -136,12 +146,12 @@ const FocusChartCard = React.memo(() => {
       const previousWeekData = getWeekData(weekOffset - 1);
       
       setChartData(currentWeekData);
-      const currentTotal = currentWeekData.reduce((acc, curr) => acc + curr.value, 0);
-      const previousTotal = previousWeekData.reduce((acc, curr) => acc + curr.value, 0);
-      setTotalHours(currentTotal);
+      const currentTotalMinutes = currentWeekData.reduce((acc, curr) => acc + Math.round(curr.value * 60), 0);
+      const previousTotalMinutes = previousWeekData.reduce((acc, curr) => acc + Math.round(curr.value * 60), 0);
+      setTotalMinutes(currentTotalMinutes);
       
-      if (previousTotal > 0) {
-        setTrend(((currentTotal - previousTotal) / previousTotal) * 100);
+      if (previousTotalMinutes > 0) {
+        setTrend(((currentTotalMinutes - previousTotalMinutes) / previousTotalMinutes) * 100);
       } else {
         setTrend(0);
       }
@@ -162,6 +172,7 @@ const FocusChartCard = React.memo(() => {
   
   const isPositiveTrend = trend > 0;
   const selectedWeekLabel = availableWeeks.find(w => w.value === weekOffset)?.label || 'CURRENT WEEK';
+  const totalDisplay = formatHoursMinutes(totalMinutes / 60);
 
   return (
     <div className="bg-white p-8 flex flex-col justify-between h-full min-h-[400px]">
@@ -195,7 +206,7 @@ const FocusChartCard = React.memo(() => {
             </div>
         </div>
         <div className="text-right">
-            <div className="text-4xl font-bold tracking-tighter">{totalHours}<span className="text-lg text-zinc-400 font-normal ml-1">hrs</span></div>
+            <div className="text-4xl font-bold tracking-tighter">{totalDisplay}</div>
             {weekOffset < 0 && trend !== 0 && (
                 <div className={`text-xs font-bold uppercase tracking-wide mt-1 flex items-center justify-end gap-1 ${isPositiveTrend ? 'text-zinc-900' : 'text-zinc-400'}`}>
                   {isPositiveTrend ? <ArrowUpRight className="w-3 h-3"/> : <ArrowDownRight className="w-3 h-3"/>}
@@ -213,14 +224,14 @@ const FocusChartCard = React.memo(() => {
               cursor={{ fill: '#f4f4f5' }}
               contentStyle={{ backgroundColor: '#000', color: '#fff', border: 'none', fontFamily: 'Space Mono', fontSize: '12px', padding: '8px 12px' }}
               itemStyle={{ color: '#fff' }}
-              formatter={(value: number) => [`${value} hrs`, "Focused Hours"]}
+                formatter={(value: number) => [formatHoursMinutes(value), "Focused Time"]}
               labelStyle={{ color: '#a1a1aa', marginBottom: '4px' }}
             />
             <Bar dataKey="value" name="Focused Hours" maxBarSize={40}>
               {chartData.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={index === chartData.length - 1 && weekOffset === 0 ? '#18181b' : '#e4e4e7'} className="hover:opacity-80 transition-opacity cursor-pointer" />
               ))}
-              <LabelList dataKey="value" position="top" style={{ fill: '#18181b', fontSize: '12px', fontFamily: 'Space Mono', fontWeight: 'bold' }} formatter={(value: number) => value > 0 ? value : ''} />
+                <LabelList dataKey="value" position="top" style={{ fill: '#18181b', fontSize: '12px', fontFamily: 'Space Mono', fontWeight: 'bold' }} formatter={(value: number) => value > 0 ? formatHoursMinutes(value) : ''} />
             </Bar>
           </BarChart>
         </ResponsiveContainer>
