@@ -1,6 +1,7 @@
 // Content Script for StoicFocus Extension
 import { safeStorageLocalSet } from './storageHelpers';
 import { getInitialCollapseState, setCollapseState } from './blockButtonUtils';
+import { getDoomAlertConfig } from './doomUtils';
 
 interface AppSettings {
   enabled: boolean;
@@ -23,7 +24,7 @@ interface BlockedSite {
   domain: string;
   type: 'domain' | 'category';
   category: string;
-  listType: 'blacklist' | 'greylist';
+  listType: 'blacklist' | 'greylist' | 'whitelist';
 }
 
 interface CategoryDefinitions {
@@ -212,7 +213,7 @@ const createBlockButton = (): HTMLElement => {
 
   if (btn) {
     btn.addEventListener('click', blockCurrentPage);
-  }
+        }
 
   // Initialize collapsed state for current domain
   setCollapsed(collapsed);
@@ -284,10 +285,37 @@ const handleScroll = async () => {
   const pagesScrolled = scrollTop / clientHeight;
   
   if (pagesScrolled > settings.doomScrollLimit) {
-    if (hiddenStates.notificationsHidden) return;
-    // Show doom scroll alert
+    // Show/update doom scroll alert
     const existingAlert = document.getElementById('stoicfocus-doom-alert');
-    if (existingAlert) return;
+    if (existingAlert) {
+      const cfg = getDoomAlertConfig(doomDismissedOnce);
+      const labelEl = existingAlert.querySelector('.stoicfocus-doom-label') as HTMLSpanElement | null;
+      if (labelEl) {
+        labelEl.textContent = cfg.label;
+      }
+      const whitelistEl = existingAlert.querySelector('.stoicfocus-doom-whitelist') as HTMLButtonElement | null;
+      if (cfg.showWhitelist && !whitelistEl) {
+        const wl = document.createElement('button');
+        wl.className = 'stoicfocus-doom-whitelist';
+        wl.textContent = 'Whitelist';
+        wl.style.border = '1px solid #ffffff';
+        wl.style.background = 'transparent';
+        wl.style.color = '#ffffff';
+        wl.style.fontWeight = '700';
+        wl.style.fontSize = '10px';
+        wl.style.padding = '4px 8px';
+        wl.style.borderRadius = '0px';
+        wl.style.cursor = 'pointer';
+        wl.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          await whitelistCurrentPage();
+          existingAlert.remove();
+          doomDismissedOnce = false;
+        });
+        existingAlert.insertBefore(wl, existingAlert.querySelector('.stoicfocus-doom-close'));
+      }
+      return;
+    }
     const alert = document.createElement('div');
     alert.id = 'stoicfocus-doom-alert';
     alert.style.cssText = `
@@ -295,33 +323,36 @@ const handleScroll = async () => {
       top: 56px;
       right: 10px;
       z-index: 999998;
-      background-color: #dc2626;
+      background-color: #0f0f10;
       color: white;
       padding: 8px 10px;
-      border-radius: 6px;
+      border-radius: 0px;
       font-family: 'Space Mono', monospace;
       font-size: 10px;
       font-weight: bold;
       text-transform: uppercase;
       box-shadow: 0 4px 6px rgba(0,0,0,0.2);
       animation: pulse 2s infinite;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
     `;
-    alert.textContent = 'DOOM SCROLL DETECTED';
 
-    const actions = document.createElement('div');
-    actions.style.display = 'flex';
-    actions.style.alignItems = 'center';
-    actions.style.gap = '6px';
+    const cfg = getDoomAlertConfig(doomDismissedOnce);
+    const label = document.createElement('span');
+    label.className = 'stoicfocus-doom-label';
+    label.textContent = cfg.label;
 
     const blockActionBtn = document.createElement('button');
     blockActionBtn.textContent = 'Block site';
-    blockActionBtn.style.border = '1px solid #fff';
-    blockActionBtn.style.background = '#b91c1c';
+    blockActionBtn.style.border = '1px solid #dc2626';
+    blockActionBtn.style.background = '#dc2626';
     blockActionBtn.style.color = '#fff';
     blockActionBtn.style.fontWeight = '700';
     blockActionBtn.style.fontSize = '10px';
     blockActionBtn.style.padding = '4px 8px';
-    blockActionBtn.style.borderRadius = '6px';
+    blockActionBtn.style.borderRadius = '0px';
     blockActionBtn.style.cursor = 'pointer';
     blockActionBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
@@ -339,13 +370,32 @@ const handleScroll = async () => {
     closeBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       alert.remove();
-      hiddenStates.notificationsHidden = true;
-      await saveHiddenStates({ notificationsHidden: true });
-      ensureNotificationRestore();
+      doomDismissedOnce = true;
     });
-    actions.appendChild(blockActionBtn);
-    actions.appendChild(closeBtn);
-    alert.appendChild(actions);
+
+    alert.appendChild(label);
+    alert.appendChild(blockActionBtn);
+    if (cfg.showWhitelist) {
+      const whitelistBtn = document.createElement('button');
+      whitelistBtn.className = 'stoicfocus-doom-whitelist';
+      whitelistBtn.textContent = 'Whitelist';
+      whitelistBtn.style.border = '1px solid #ffffff';
+      whitelistBtn.style.background = 'transparent';
+      whitelistBtn.style.color = '#ffffff';
+      whitelistBtn.style.fontWeight = '700';
+      whitelistBtn.style.fontSize = '10px';
+      whitelistBtn.style.padding = '4px 8px';
+      whitelistBtn.style.borderRadius = '0px';
+      whitelistBtn.style.cursor = 'pointer';
+      whitelistBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        await whitelistCurrentPage();
+        alert.remove();
+        doomDismissedOnce = false;
+      });
+      alert.appendChild(whitelistBtn);
+    }
+    alert.appendChild(closeBtn);
 
     document.body.appendChild(alert);
     
@@ -395,7 +445,7 @@ let tabListExpanded = false;
 const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
 let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, notificationsHidden: false, blockButtonCollapsed: {} };
 let settingsEnabled = true;
-let notifyRestore: HTMLDivElement | null = null;
+let doomDismissedOnce = false;
 
 const loadHiddenStates = async (): Promise<HiddenStates> => {
   try {
@@ -458,39 +508,39 @@ const blockCurrentPage = async () => {
       console.error('Error blocking site:', e);
     }
   }
+  doomDismissedOnce = false;
 };
 
-const ensureNotificationRestore = () => {
-  if (!hiddenStates.notificationsHidden) {
-    if (notifyRestore) notifyRestore.remove();
-    notifyRestore = null;
-    return;
-  }
-  if (!notifyRestore) {
-    notifyRestore = document.createElement('div');
-    notifyRestore.id = 'stoicfocus-notify-restore';
-    notifyRestore.style.position = 'fixed';
-    notifyRestore.style.top = '10px';
-    notifyRestore.style.left = '10px';
-    notifyRestore.style.zIndex = '2147483647';
-    notifyRestore.style.background = '#dc2626';
-    notifyRestore.style.color = '#fff';
-    notifyRestore.style.padding = '6px 8px';
-    notifyRestore.style.borderRadius = '9999px';
-    notifyRestore.style.fontFamily = '"Space Mono", monospace';
-    notifyRestore.style.fontSize = '10px';
-    notifyRestore.style.fontWeight = '700';
-    notifyRestore.style.cursor = 'pointer';
-    notifyRestore.style.boxShadow = '0 6px 12px rgba(0,0,0,0.18)';
-    notifyRestore.textContent = 'Show notifications';
-    notifyRestore.addEventListener('click', async () => {
-      hiddenStates.notificationsHidden = false;
-      await saveHiddenStates({ notificationsHidden: false });
-      ensureNotificationRestore();
-    });
-    document.body.appendChild(notifyRestore);
+const whitelistCurrentPage = async () => {
+  const currentUrl = window.location.href;
+  try {
+    if (!isExtensionContextValid()) {
+      console.warn('Extension context invalidated. Please reload the page.');
+      return;
+    }
+    const url = new URL(currentUrl);
+    const domain = url.hostname.replace(/^www\./, '');
+    const result = await safeStorageGet('blockedSites');
+    const blockedSites = result.blockedSites || [];
+    const already = blockedSites.some((s: BlockedSite) => s.domain === domain && s.listType === 'whitelist');
+    if (!already) {
+      blockedSites.push({
+        id: Math.random().toString(36).substr(2, 9),
+        domain,
+        type: 'domain' as const,
+        category: 'custom',
+        listType: 'whitelist' as const,
+        redirectCount: 0
+      });
+      await safeStorageSet({ blockedSites });
+    }
+  } catch (e: any) {
+    if (!e?.message?.includes('Extension context invalidated')) {
+      console.error('Error whitelisting site:', e);
+    }
   }
 };
+
 
 const computeListFlags = (
   blockedSites: BlockedSite[],
@@ -741,7 +791,7 @@ const ensureFixedStyles = () => {
       background-color: #dc2626 !important;
       color: #ffffff !important;
       border: 1px solid rgba(255,255,255,0.1) !important;
-      border-radius: 7px 0 0 7px !important;
+      border-radius: 0px 0 0 0px !important;
       font-family: 'Space Mono', monospace !important;
       font-size: 10px !important;
       font-weight: 700 !important;
@@ -756,7 +806,7 @@ const ensureFixedStyles = () => {
       -webkit-filter: none !important;
       mix-blend-mode: normal !important;
       isolation: isolate !important;
-    }
+  }
     #stoicfocus-block-button .stoicfocus-block-main svg {
       flex-shrink: 0 !important;
     }
@@ -770,7 +820,7 @@ const ensureFixedStyles = () => {
       color: #ffffff !important;
       border: 1px solid rgba(255,255,255,0.1) !important;
       border-left: none !important;
-      border-radius: 0 7px 7px 0 !important;
+      border-radius: 0px !important;
       cursor: pointer !important;
       box-shadow: 0 6px 12px rgba(0,0,0,0.2) !important;
       font-family: 'Space Mono', monospace !important;
@@ -785,7 +835,7 @@ const ensureFixedStyles = () => {
       display: none !important;
     }
     #stoicfocus-block-button.stoicfocus-collapsed .stoicfocus-block-handle {
-      border-radius: 7px !important;
+      border-radius: 0px !important;
       border-left: 1px solid rgba(255,255,255,0.1) !important;
       transform: translateZ(0) !important;
     }
@@ -797,6 +847,7 @@ const ensureFixedStyles = () => {
       left: auto !important;
       z-index: 2147483647 !important;
       transform: translateZ(0) !important;
+      border-radius: 0px !important;
     }
   `;
   document.head.appendChild(style);
@@ -826,7 +877,6 @@ const ensureMonochromeLayer = (enabled: boolean) => {
 
 // Show monochrome notification
 const showMonochromeNotification = () => {
-  if (hiddenStates.notificationsHidden) return;
   // Remove existing notification if any
   const existing = document.getElementById('stoicfocus-monochrome-notification');
   if (existing) {
@@ -865,9 +915,6 @@ const showMonochromeNotification = () => {
   closeBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
     notification.remove();
-    hiddenStates.notificationsHidden = true;
-    await saveHiddenStates({ notificationsHidden: true });
-    ensureNotificationRestore();
   });
   notification.appendChild(closeBtn);
 
@@ -1040,10 +1087,10 @@ const ensureTabRestore = () => {
 };
 
 const init = async () => {
+  doomDismissedOnce = false;
   await loadHiddenStates();
   ensureFixedStyles();
   const settings = await loadSettings();
-  ensureNotificationRestore();
   
   if (!settings.enabled) return;
   
@@ -1074,7 +1121,7 @@ const init = async () => {
   const currentDomain = window.location.hostname.replace('www.', '').toLowerCase();
   const { inBlock, inGrey, inWhite } = computeListFlags(blockedSites, categoryDefinitions, currentDomain);
   isWhitelisted = inWhite && !inBlock && !inGrey;
-
+  
   if (inGrey && !inBlock && !isWhitelisted) {
     try {
     // Check if temporarily unlocked
@@ -1124,8 +1171,8 @@ chrome.runtime.onMessage.addListener((message) => {
     });
   } catch (e) {
     // Extension context invalidated, ignore
+    }
   }
-}
 
 // Run on page load
 if (document.readyState === 'loading') {
@@ -1168,20 +1215,20 @@ window.addEventListener('focus', () => {
 // Re-apply monochrome when pomo state or settings change
 if (isExtensionContextValid()) {
   try {
-    chrome.storage.onChanged.addListener((changes, areaName) => {
+chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync') {
         if (changes.settings) {
           settingsEnabled = !!(changes.settings.newValue?.enabled ?? settingsEnabled);
           monochromeApplied = false;
           applyMonochrome(false);
           ensureUI(true);
-        }
+  }
         if (changes.blockedSites || changes.categoryDefinitions) {
           monochromeApplied = false;
           applyMonochrome(false);
         }
-      }
-    });
+  }
+});
   } catch (e) {
     // Extension context invalidated, ignore
   }
