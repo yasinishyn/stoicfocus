@@ -54,6 +54,13 @@ export interface AppMetrics {
   frictionOvercome: number;
 }
 
+export interface TabSummary {
+  count: number;
+  limit: number;
+  overLimit: boolean;
+  tabs: Array<{ id: number; title: string; url: string; active?: boolean; usage?: number }>;
+}
+
 export interface DailyTimeData {
   date: string; // YYYY-MM-DD format
   hours: number; // Total hours focused that day

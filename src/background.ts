@@ -1,5 +1,8 @@
 // Background Service Worker for StoicFocus Extension
 
+import { TabSummary } from './types';
+import { computeTabSummary } from './tabUtils';
+
 interface BlockedSite {
   id: string;
   domain: string;
@@ -53,6 +56,8 @@ const DEFAULT_CATEGORIES: CategoryDefinitions = {
   custom: []
 };
 
+const TAB_USAGE_KEY = 'tabUsageCounts';
+
 // Helper to extract domain from URL
 const getDomain = (url: string): string => {
   try {
@@ -60,6 +65,26 @@ const getDomain = (url: string): string => {
     return urlObj.hostname.replace('www.', '');
   } catch {
     return url;
+  }
+};
+
+const getTabUsageCounts = async (): Promise<Record<number, number>> => {
+  const result = await chrome.storage.local.get(TAB_USAGE_KEY);
+  return result[TAB_USAGE_KEY] || {};
+};
+
+const incrementTabUsage = async (tabId: number) => {
+  if (!tabId && tabId !== 0) return;
+  const usage = await getTabUsageCounts();
+  usage[tabId] = (usage[tabId] || 0) + 1;
+  await chrome.storage.local.set({ [TAB_USAGE_KEY]: usage });
+};
+
+const removeTabUsage = async (tabId: number) => {
+  const usage = await getTabUsageCounts();
+  if (usage[tabId] !== undefined) {
+    delete usage[tabId];
+    await chrome.storage.local.set({ [TAB_USAGE_KEY]: usage });
   }
 };
 
@@ -80,15 +105,15 @@ const isBlocked = (url: string, blockedSites: BlockedSite[], categoryDefinitions
   let inGrey = false;
   let inWhite = false;
   let matchedDomain: string | undefined;
-
+  
   for (const site of blockedSites) {
     const listType = (site as any).listType === 'blacklist' ? 'blocklist' : site.listType;
     const matched = (() => {
-      if (site.type === 'domain') {
+    if (site.type === 'domain') {
         if (matches(site.domain)) {
           matchedDomain = site.domain;
           return true;
-        }
+      }
         return false;
       }
       const domains = categoryDefinitions[site.category] || [];
@@ -131,7 +156,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (listType === 'whitelist') return;
 
   if (blocked && listType === 'blocklist') {
-      // Redirect to blocked page
+    // Redirect to blocked page
     const blockedUrl = chrome.runtime.getURL(`blocked.html?url=${encodeURIComponent(tab.url)}&mode=strict`);
     chrome.tabs.update(tabId, { url: blockedUrl });
     
@@ -167,44 +192,38 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
-// Memento Mori - Tab limit management (prevents new tabs when limit is reached)
-chrome.tabs.onCreated.addListener(async (tab) => {
-  const result = await chrome.storage.sync.get(['settings', 'blockedSites', 'categoryDefinitions']);
-  const settings: AppSettings = result.settings || DEFAULT_SETTINGS;
-  const blockedSites: BlockedSite[] = (result.blockedSites || []).map((s: any) => ({
-    ...s,
-    listType: (s.listType === 'blacklist' ? 'blocklist' : s.listType) as any
-  }));
-  const categoryDefinitions: CategoryDefinitions = result.categoryDefinitions || DEFAULT_CATEGORIES;
-  
-  if (!settings.mementoMoriEnabled || !settings.enabled) return;
-  
-  // Wait a moment for the tab to be fully created
-  setTimeout(async () => {
-    const [freshTab] = tab.id ? await chrome.tabs.query({ id: tab.id }) : [];
-    const targetTab = freshTab || tab;
-    
-    // If the new tab points to a whitelisted domain, skip tab-limit enforcement
-    const urlToCheck = targetTab?.url || '';
-    const { listType } = isBlocked(urlToCheck, blockedSites, categoryDefinitions);
-    if (listType === 'whitelist') return;
+// Tab summary tracking (Memento Mori warnings instead of auto-close)
+const refreshTabSummary = async () => {
+  const settingsResult = await chrome.storage.sync.get('settings');
+  const settings: AppSettings = settingsResult.settings || DEFAULT_SETTINGS;
+  const enabled = settings.enabled && settings.mementoMoriEnabled;
 
-    const tabs = await chrome.tabs.query({});
-    const unpinnedTabs = tabs.filter(t => !t.pinned);
-    
-    // If limit exceeded, show explanation screen instead of closing
-    if (unpinnedTabs.length > settings.tabLimit && targetTab?.id && targetTab.url) {
-      // Redirect to memento-mori explanation page
-      const mementoUrl = chrome.runtime.getURL(`blocked.html?mode=memento&limit=${settings.tabLimit}`);
-      await chrome.tabs.update(targetTab.id, { url: mementoUrl });
-      
-      // Update metrics
-      const metrics = await chrome.storage.local.get('metrics');
-      const currentMetrics = metrics.metrics || { tabsWithered: 0 };
-      currentMetrics.tabsWithered = (currentMetrics.tabsWithered || 0) + 1;
-      await chrome.storage.local.set({ metrics: currentMetrics });
-    }
-  }, 100);
+  const tabs = await chrome.tabs.query({});
+  const usage = await getTabUsageCounts();
+  const summary = computeTabSummary(
+    tabs,
+    { enabled, mementoMoriEnabled: settings.mementoMoriEnabled, tabLimit: settings.tabLimit || DEFAULT_SETTINGS.tabLimit },
+    usage
+  );
+  await chrome.storage.local.set({ tabSummary: summary });
+};
+
+chrome.tabs.onCreated.addListener(() => refreshTabSummary().catch(() => {}));
+chrome.tabs.onRemoved.addListener((tabId) => {
+  removeTabUsage(tabId).catch(() => {});
+  refreshTabSummary().catch(() => {});
+});
+chrome.tabs.onUpdated.addListener(() => refreshTabSummary().catch(() => {}));
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  await incrementTabUsage(activeInfo.tabId);
+  await refreshTabSummary().catch(() => {});
+});
+
+// Refresh tab summary when settings change (e.g., tabLimit updates)
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName === 'sync' && changes.settings) {
+    refreshTabSummary().catch(() => {});
+  }
 });
 
 // Handle messages from popup and content scripts
@@ -238,6 +257,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (message.type === 'GET_TAB_SUMMARY') {
+    chrome.storage.local.get('tabSummary').then(result => {
+      sendResponse({ tabSummary: result.tabSummary as TabSummary | undefined });
+    });
+    return true;
+  }
+
+  if (message.type === 'CLOSE_TAB' && typeof message.tabId === 'number') {
+    chrome.tabs.remove(message.tabId).catch(() => {});
+  }
 });
 
 // Time tracking variables
@@ -245,17 +275,21 @@ let focusSessionStartTime: number | null = null;
 let lastTrackedSecond: number = 0;
 let notifiedFocusEnding = false;
 let notifiedBreakEnding = false;
+let lastFocusTimeLeftStart = 0;
 
 // Track focus time and store daily data
 const trackFocusTime = async (seconds: number) => {
   const hours = seconds / 3600;
   if (hours <= 0) return;
   
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  // Use local date to avoid timezone offset shifting into the next day
+  const today = new Date();
+  const localDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dateStr = localDate.toISOString().split('T')[0]; // YYYY-MM-DD in local day
   const result = await chrome.storage.local.get('dailyTimeData');
   const dailyTimeData: Record<string, number> = result.dailyTimeData || {};
   
-  dailyTimeData[today] = (dailyTimeData[today] || 0) + hours;
+  dailyTimeData[dateStr] = (dailyTimeData[dateStr] || 0) + hours;
   await chrome.storage.local.set({ dailyTimeData });
 };
 
@@ -281,7 +315,7 @@ const startPomoTimer = async () => {
 
       // Countdown tick
       if (pomo.timeLeft > 0) {
-        const newTimeLeft = pomo.timeLeft - 1;
+      const newTimeLeft = pomo.timeLeft - 1;
 
         // 10-second heads up notifications
         if (newTimeLeft === 10) {
@@ -307,36 +341,43 @@ const startPomoTimer = async () => {
           } catch {}
         }
 
-        await chrome.storage.local.set({ 
-          pomo: { ...pomo, timeLeft: newTimeLeft } 
-        });
+      await chrome.storage.local.set({ 
+        pomo: { ...pomo, timeLeft: newTimeLeft } 
+      });
+      
+      // Timer finished
+      if (newTimeLeft === 0) {
+        const settingsResult = await chrome.storage.sync.get('settings');
+        const settings: AppSettings = settingsResult.settings || DEFAULT_SETTINGS;
+        const nextMode = pomo.mode === 'focus' ? 'break' : 'focus';
+        const nextDuration = nextMode === 'focus' ? settings.focusDuration * 60 : settings.breakDuration * 60;
         
-        // Timer finished
-        if (newTimeLeft === 0) {
-          const settingsResult = await chrome.storage.sync.get('settings');
-          const settings: AppSettings = settingsResult.settings || DEFAULT_SETTINGS;
-          const nextMode = pomo.mode === 'focus' ? 'break' : 'focus';
-          const nextDuration = nextMode === 'focus' ? settings.focusDuration * 60 : settings.breakDuration * 60;
-          
           // Reset notifications for next cycle
           notifiedFocusEnding = false;
           notifiedBreakEnding = false;
 
-          // Auto-start break; stop before starting a new focus (to allow negative visualization)
-          const nextActive = nextMode === 'break';
-          await chrome.storage.local.set({
+          // Auto-start next session (focus or break)
+          const nextActive = true;
+        await chrome.storage.local.set({
             pomo: { isActive: nextActive, mode: nextMode, timeLeft: nextDuration, preMortemCaptured: nextMode === 'focus' ? false : (pomo.preMortemCaptured ?? false) }
-          });
-          
-          // Show notification
-          chrome.notifications.create({
-            type: 'basic',
-            iconUrl: chrome.runtime.getURL('icon48.png'),
-            title: 'StoicFocus Timer',
-            message: `Timer complete. Switching to ${nextMode === 'focus' ? 'Deep Work' : 'Rest Phase'}.`
-          }).catch(() => {
-            // Ignore if notifications not available
-          });
+        });
+          if (pomo.mode === 'focus' && focusSessionStartTime) {
+            const sessionDuration = (Date.now() - focusSessionStartTime) / 1000;
+            await trackFocusTime(sessionDuration);
+            focusSessionStartTime = null;
+            lastTrackedSecond = 0;
+          }
+          await notifySession(nextMode);
+        
+        // Show notification
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('icon48.png'),
+          title: 'StoicFocus Timer',
+          message: `Timer complete. Switching to ${nextMode === 'focus' ? 'Deep Work' : 'Rest Phase'}.`
+        }).catch(() => {
+          // Ignore if notifications not available
+        });
         }
       }
     } else if (pomo && !pomo.isActive) {
@@ -359,7 +400,9 @@ chrome.storage.onChanged.addListener(async (changes) => {
     if (newPomo && newPomo.isActive && newPomo.mode === 'focus' && (!oldPomo || !oldPomo.isActive)) {
       focusSessionStartTime = Date.now();
       lastTrackedSecond = newPomo.timeLeft;
+      lastFocusTimeLeftStart = newPomo.timeLeft || lastFocusTimeLeftStart;
       startPomoTimer();
+      await notifySession('focus');
     }
     // Focus -> break (still active): track focus time then continue
     else if (oldPomo && oldPomo.isActive && oldPomo.mode === 'focus' && newPomo && newPomo.isActive && newPomo.mode === 'break') {
@@ -368,16 +411,31 @@ chrome.storage.onChanged.addListener(async (changes) => {
         await trackFocusTime(sessionDuration);
         focusSessionStartTime = null;
         lastTrackedSecond = 0;
+        lastFocusTimeLeftStart = 0;
       }
       startPomoTimer();
+      await notifySession('break');
+    }
+    // Break -> focus (auto start)
+    else if (oldPomo && oldPomo.isActive && oldPomo.mode === 'break' && newPomo && newPomo.isActive && newPomo.mode === 'focus') {
+      focusSessionStartTime = Date.now();
+      lastTrackedSecond = newPomo.timeLeft;
+      lastFocusTimeLeftStart = newPomo.timeLeft || lastFocusTimeLeftStart;
+      startPomoTimer();
+      await notifySession('focus');
     }
     // Session paused or stopped
     else if (oldPomo && oldPomo.isActive && oldPomo.mode === 'focus' && (!newPomo || !newPomo.isActive)) {
-      if (focusSessionStartTime) {
-        const sessionDuration = (Date.now() - focusSessionStartTime) / 1000;
-        await trackFocusTime(sessionDuration);
+      if (focusSessionStartTime || lastFocusTimeLeftStart) {
+        const elapsedFromTime = focusSessionStartTime ? (Date.now() - focusSessionStartTime) / 1000 : 0;
+        const elapsedFromTimer = oldPomo.timeLeft !== undefined ? (lastFocusTimeLeftStart - oldPomo.timeLeft) : 0;
+        const sessionDuration = Math.max(elapsedFromTime, elapsedFromTimer);
+        if (sessionDuration > 0) {
+          await trackFocusTime(sessionDuration);
+        }
         focusSessionStartTime = null;
         lastTrackedSecond = 0;
+        lastFocusTimeLeftStart = 0;
       }
       if (pomoTimerInterval) {
         clearInterval(pomoTimerInterval);
@@ -400,6 +458,24 @@ const incrementDomainRedirectCount = async (domain: string) => {
   const counts: Record<string, number> = res.domainRedirectCounts || {};
   counts[domain] = (counts[domain] || 0) + 1;
   await chrome.storage.local.set({ domainRedirectCounts: counts });
+};
+
+const notifySession = async (mode: 'focus' | 'break') => {
+  try {
+    const title = mode === 'focus' ? 'Deep Work Started' : 'Rest Started';
+    const message = mode === 'focus'
+      ? 'Focus now. Distractions are blocked.'
+      : 'Take a short break. Recharge and come back strong.';
+    await chrome.notifications.create({
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icon48.png'),
+      title,
+      message,
+      silent: false
+    });
+  } catch {
+    // ignore notification errors
+  }
 };
 
 // Helper to block a domain
@@ -439,9 +515,14 @@ const blockDomain = async (domain: string) => {
   return false;
 };
 
-// Request notification permission on install/startup
+const NOTIFICATION_PERMISSION_FLAG = 'notificationPermissionShown';
+
+// Request notification permission on install/startup (only once)
 const requestNotificationPermission = async () => {
   try {
+    const flag = await chrome.storage.local.get(NOTIFICATION_PERMISSION_FLAG);
+    if (flag[NOTIFICATION_PERMISSION_FLAG]) return;
+
     const permission = await chrome.notifications.getPermissionLevel();
     if (permission === 'denied') {
       // Permission was denied, we can't request again
@@ -455,6 +536,7 @@ const requestNotificationPermission = async () => {
         title: 'StoicFocus',
         message: 'Notifications enabled for focus tracking and tab management.'
       });
+      await chrome.storage.local.set({ [NOTIFICATION_PERMISSION_FLAG]: true });
     } catch (e) {
       // Permission not granted yet, will be requested on first actual notification
     }
@@ -516,6 +598,9 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.storage.sync.set({ categoryDefinitions: DEFAULT_CATEGORIES });
   }
   
+  await chrome.storage.local.set({ [TAB_USAGE_KEY]: {} });
+  await refreshTabSummary().catch(() => {});
+  
   // Start pomo timer if active
   const pomoResult = await chrome.storage.local.get('pomo');
   if (pomoResult.pomo && pomoResult.pomo.isActive) {
@@ -564,6 +649,7 @@ chrome.commands.onCommand.addListener(async (command) => {
 chrome.runtime.onStartup.addListener(async () => {
   await requestNotificationPermission();
   await refreshActionIcon();
+  await refreshTabSummary().catch(() => {});
   const pomoResult = await chrome.storage.local.get('pomo');
   if (pomoResult.pomo && pomoResult.pomo.isActive) {
     startPomoTimer();

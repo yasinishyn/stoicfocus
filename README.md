@@ -30,7 +30,7 @@ Trusted domains. StoicFocus will not apply friction, blocking, monochrome mode, 
 ![Whitelist](./public/whitelist-page.png)
 
 ### Memento Mori Tabs
-Tabs are transient. If you exceed your limit (Default: 5), the oldest tab is automatically closed. Pinned tabs are safe. This feature reminds you that time is finite and every tab represents a commitment of attention.
+Tabs are transient. If you exceed your limit (default: 5), StoicFocus shows a red warning (popup + in-page) with all open tabs and lets you close them yourself. No auto-closing. Pinned tabs remain safe.
 
 ### Monochrome Mode
 Dopamine detox. During focus sessions, the entire internet is rendered in grayscale to reduce visual stimulation and help you maintain focus on content, not colors.

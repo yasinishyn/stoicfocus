@@ -4,6 +4,7 @@ import '../src/index.css';
 import Dashboard from './DashboardComponent';
 import OnboardingModal from './OnboardingModal';
 import { BlockedSite, AppSettings, AppMetrics, PomodoroState } from '../src/types';
+import { normalizeDomainValue } from '../src/domainUtils';
 
 const INITIAL_CATEGORIES: Record<string, string[]> = {
   social: ['x.com', 'twitter.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'tiktok.com', 'reddit.com', 'threads.net', 'pinterest.com', 'snapchat.com'],
@@ -20,6 +21,38 @@ const normalizeListType = (lt: string): 'blocklist' | 'greylist' | 'whitelist' =
   return 'blocklist';
 };
 
+const CATEGORY_LABELS: Record<string, string> = {
+  social: 'Social Media',
+  news: 'News & Media',
+  shopping: 'Shopping',
+  entertainment: 'Entertainment',
+  custom: 'Custom',
+};
+
+const getCategoryDisplayName = (key: string, cats: Record<string, string[]>): string => {
+  if (CATEGORY_LABELS[key]) return CATEGORY_LABELS[key];
+  const domains = cats[key] || [];
+  if (domains.length > 0) return domains[0];
+  return key;
+};
+
+const normalizeDomainValue = (val: string): string => {
+  let v = val.trim();
+  if (!v) return v;
+  try {
+    if (v.includes('://')) {
+      const url = new URL(v);
+      v = url.hostname;
+    }
+  } catch {
+    // ignore
+  }
+  v = v.replace(/^https?:\/\//, '');
+  v = v.replace(/^www\./, '');
+  v = v.replace(/\/+$/, '');
+  return v.toLowerCase();
+};
+
 const DashboardApp = () => {
   const normalizeCategorySiteNames = (
     sites: BlockedSite[],
@@ -27,9 +60,7 @@ const DashboardApp = () => {
   ): BlockedSite[] => {
     return sites.map(site => {
       if (site.type === 'category') {
-        const domains = cats[site.category] || [];
-        const first = domains[0] || site.domain;
-        return { ...site, domain: first };
+        return { ...site, domain: getCategoryDisplayName(site.category, cats) };
       }
       return site;
     });
@@ -69,7 +100,8 @@ const DashboardApp = () => {
         geminiApiKey: '',
         focusDuration: 25,
         breakDuration: 5,
-        negativeVisualization: true
+        negativeVisualization: true,
+        frictionDurationMinutes: 10
       };
       setSettings(loadedSettings);
       
@@ -89,6 +121,7 @@ const DashboardApp = () => {
       const sitesResult = await chrome.storage.sync.get('blockedSites');
       const normalizedSites: BlockedSite[] = (sitesResult.blockedSites || []).map((s: any) => ({
         ...s,
+        domain: s.type === 'domain' ? normalizeDomainValue(s.domain || '') : s.domain,
         listType: normalizeListType(s.listType)
       }));
       const nameFixedSites = normalizeCategorySiteNames(normalizedSites, mergedCats);
@@ -122,6 +155,7 @@ const DashboardApp = () => {
         if (changes.blockedSites && changes.blockedSites.newValue !== undefined) {
           const normalizedSites: BlockedSite[] = (changes.blockedSites.newValue || []).map((s: any) => ({
             ...s,
+            domain: s.type === 'domain' ? normalizeDomainValue(s.domain || '') : s.domain,
             listType: normalizeListType(s.listType)
           }));
           const cats = changes.categoryDefinitions?.newValue || categoryDefinitions;
@@ -171,19 +205,24 @@ const DashboardApp = () => {
   const handleAddSite = async (value: string, type: 'domain' | 'category', listType: 'blocklist' | 'greylist' | 'whitelist', manualCategory?: string) => {
     const updatedCategories = { ...categoryDefinitions };
     let categoryToUse = manualCategory || 'custom';
+    let displayDomain = value;
     if (type === 'category') {
       categoryToUse = value;
       const defaults = INITIAL_CATEGORIES[value] || [];
       if (!updatedCategories[value] || updatedCategories[value].length === 0) {
         updatedCategories[value] = defaults;
       }
+      displayDomain = getCategoryDisplayName(value, updatedCategories);
       setCategoryDefinitions(updatedCategories);
       await chrome.storage.sync.set({ categoryDefinitions: updatedCategories });
+    }
+    if (type === 'domain') {
+      displayDomain = normalizeDomainValue(value);
     }
 
     const newSite: BlockedSite = {
       id: Math.random().toString(36).substr(2, 9),
-      domain: value,
+      domain: displayDomain,
       type,
       category: categoryToUse,
       listType,
@@ -260,7 +299,7 @@ const DashboardApp = () => {
     
     const newGroup: BlockedSite = {
       id: target.id,
-      domain: updated[newCategoryId][0] || target.domain,
+      domain: getCategoryDisplayName(newCategoryId, updated),
       type: 'category',
       category: newCategoryId,
       listType: target.listType,
@@ -293,7 +332,7 @@ const DashboardApp = () => {
         
         const newGroup: BlockedSite = {
           id: target.id,
-          domain: updated[newCategoryId][0] || target.domain,
+          domain: getCategoryDisplayName(newCategoryId, updated),
           type: 'category',
           category: newCategoryId,
           listType: target.listType,
@@ -324,7 +363,7 @@ const DashboardApp = () => {
     
     const newSite: BlockedSite = {
       id: Math.random().toString(36).substr(2, 9),
-      domain: domainToRemove,
+      domain: normalizeDomainValue(domainToRemove),
       type: 'domain',
       category: 'custom',
       listType: site.listType,

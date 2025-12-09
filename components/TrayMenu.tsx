@@ -1,14 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { Play, Pause, X, Settings, BrainCircuit, Zap, Ban, AlertTriangle, ScrollText } from 'lucide-react';
-import { PomodoroState, AppSettings } from '../src/types';
+import { PomodoroState, AppSettings, TabSummary } from '../src/types';
 
 interface ExtensionPopupProps {
   onClose: () => void;
   settings: AppSettings;
   onUpdateSettings: (s: AppSettings) => void;
-  currentDomain: string;
-  onBlockCurrent: () => void;
   onOpenPage: (url: string) => void;
   pomo: PomodoroState;
   setPomo: React.Dispatch<React.SetStateAction<PomodoroState>>;
@@ -92,8 +90,6 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
   onClose, 
   settings, 
   onUpdateSettings,
-  currentDomain, 
-  onBlockCurrent,
   onOpenPage,
   pomo,
   setPomo,
@@ -104,6 +100,8 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
   const [feedback, setFeedback] = useState<string | null>(null);
   const [view, setView] = useState<'main' | 'premortem'>('main');
   const [preMortemInput, setPreMortemInput] = useState('');
+  const [tabSummary, setTabSummary] = useState<TabSummary | null>(null);
+  const [tabsOpen, setTabsOpen] = useState(false);
 
   const updatePomo = (updater: (p: PomodoroState) => PomodoroState) => {
     setPomo(prev => {
@@ -121,6 +119,22 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
       return () => clearTimeout(timer);
     }
   }, [feedback]);
+
+  // Load tab summary
+  useEffect(() => {
+    const loadTabs = async () => {
+      const res = await chrome.storage.local.get('tabSummary');
+      setTabSummary(res.tabSummary || null);
+    };
+    loadTabs();
+    const handleChange = (changes: Record<string, { oldValue?: any; newValue?: any }>, area: string) => {
+      if (area === 'local' && changes.tabSummary) {
+        setTabSummary(changes.tabSummary.newValue || null);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleChange);
+    return () => chrome.storage.onChanged.removeListener(handleChange);
+  }, []);
 
   const ensureBaseline = (prev: PomodoroState): PomodoroState => {
     const mode = prev.mode || 'focus';
@@ -163,6 +177,17 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
     setPreMortemInput('');
   };
 
+  const handleStop = () => {
+    if (pomo.isActive && settings.hardcoreMode) {
+      const randomPuzzle = PUZZLES[Math.floor(Math.random() * PUZZLES.length)];
+      setPuzzle(randomPuzzle);
+      setPendingAction('stop');
+      return;
+    }
+    updatePomo(() => ({ isActive: false, mode: 'focus', timeLeft: settings.focusDuration * 60, preMortemCaptured: false }));
+    setView('main');
+  };
+
   const handleDisableAttempt = () => {
      if (!settings.enabled) {
        onUpdateSettings({ ...settings, enabled: true });
@@ -183,6 +208,9 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
          updatePomo(prev => ({ ...prev, isActive: false }));
       } else if (pendingAction === 'disable') {
          onUpdateSettings({ ...settings, enabled: false });
+      } else if (pendingAction === 'stop') {
+         updatePomo(() => ({ isActive: false, mode: 'focus', timeLeft: settings.focusDuration * 60, preMortemCaptured: false }));
+         setView('main');
       }
       setPuzzle(null);
       setPendingAction(null);
@@ -310,15 +338,67 @@ const ExtensionPopup: React.FC<ExtensionPopupProps> = ({
                </div>
             </div>
           ) : (
-            <button 
-              onClick={handleStartFlow}
-              className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-zinc-900 hover:bg-zinc-700 text-white text-xs font-bold uppercase tracking-widest transition-all"
-            >
-              {pomo.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-              {pomo.isActive ? 'Pause' : 'Engage'}
-            </button>
+            <div className="w-full flex items-center justify-between gap-2">
+              <button 
+                onClick={handleStartFlow}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-700 text-white text-xs font-bold uppercase tracking-widest transition-all"
+              >
+                {pomo.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                {pomo.isActive ? 'Pause' : 'Engage'}
+              </button>
+              {pomo.isActive && (
+                <div className="relative group">
+                  <button
+                    onClick={handleStop}
+                    className="h-10 w-10 border-2 border-zinc-900 hover:bg-zinc-100 transition-colors flex items-center justify-center"
+                    aria-label="End focus"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                  <div className="absolute -top-9 left-1/2 -translate-x-1/2 px-2 py-1 bg-black text-white text-[10px] font-bold uppercase tracking-tight rounded shadow hidden group-hover:block">
+                    End focus
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
+
+        {/* Tab Summary */}
+        {tabSummary && (
+          <div className={`border-2 ${tabSummary.overLimit ? 'border-red-500' : 'border-zinc-900'} p-3 flex flex-col gap-2`}>
+            <div className="flex items-center justify-between">
+              <div className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-2">
+                <ScrollText className={`w-4 h-4 ${tabSummary.overLimit ? 'text-red-500' : 'text-zinc-900'}`} />
+                Tabs {tabSummary.count}/{tabSummary.limit}
+              </div>
+              <button
+                onClick={() => setTabsOpen(!tabsOpen)}
+                className="text-[10px] font-bold uppercase tracking-widest border px-2 py-1 border-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors"
+              >
+                {tabsOpen ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {tabsOpen && (
+              <div className="max-h-40 overflow-y-auto divide-y divide-zinc-200">
+                {tabSummary.tabs.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between py-1">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold truncate" title={t.title || t.url}>{t.title || t.url}</div>
+                      <div className="text-[10px] text-zinc-500 truncate" title={t.url}>{t.url}</div>
+                    </div>
+                    <button
+                      onClick={() => t.id && chrome.tabs.remove(t.id).catch(() => {})}
+                      className="ml-2 text-[10px] font-bold uppercase border border-zinc-900 px-2 py-1 hover:bg-red-500 hover:text-white transition-colors"
+                    >
+                      Close
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

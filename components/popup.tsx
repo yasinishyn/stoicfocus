@@ -38,20 +38,8 @@ const PopupApp = () => {
   const [settings, setSettings] = React.useState<AppSettings | null>(null);
   const [pomo, setPomo] = React.useState<PomodoroState | null>(null);
   const [preMortem, setPreMortem] = React.useState<string>('');
-  const [currentDomain, setCurrentDomain] = React.useState<string>('');
-
   React.useEffect(() => {
     const init = async () => {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab.url) {
-        try {
-          const url = new URL(tab.url);
-          setCurrentDomain(url.hostname);
-        } catch {
-          setCurrentDomain(tab.url);
-        }
-      }
-
       const loadedSettings = await loadSettings();
       const loadedPomo = await loadPomo();
       const loadedPreMortem = await loadPreMortem();
@@ -122,7 +110,6 @@ const PopupApp = () => {
       onClose={() => window.close()}
       settings={settings}
       onUpdateSettings={handleUpdateSettings}
-      currentDomain={currentDomain}
       onOpenPage={handleOpenPage}
       pomo={pomo}
       setPomo={handleSetPomo}

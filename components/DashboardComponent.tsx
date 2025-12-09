@@ -333,10 +333,11 @@ const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const handleExportData = () => {
+  const handleExportData = async () => {
+    const local = await chrome.storage.local.get('dailyTimeData');
     const data = {
       timestamp: new Date().toISOString(),
-      stats: WEEKLY_DATA,
+      dailyTimeData: local.dailyTimeData || {},
       metrics,
       blockedSites,
       categoryDefinitions,
@@ -807,7 +808,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                    { title: "Blocklist (Strict Block)", desc: "The Iron Curtain. Sites added here are absolutely restricted during focus sessions. Any attempt to access them will result in an immediate redirect to a screen of Stoic wisdom.", icon: Ban },
                    { title: "Grey List (Friction Zone)", desc: "A middle ground for necessary evils. Sites here aren't blocked outright but require a 'Typing Tax'. To access them, you must perfectly type a difficult philosophical text, proving your intent is conscious, not impulsive.", icon: Feather },
                    { title: "Whitelist (Safe Passage)", desc: "Trusted domains. StoicFocus will not apply friction, monochrome, doom-scroll, or blocking to these sites.", icon: Square },
-                   { title: "Memento Mori Tabs", desc: "Tabs are transient. If you exceed your limit (Default: 5), the oldest tab is automatically closed. Pinned tabs are safe.", icon: Layers },
+                  { title: "Memento Mori Tabs", desc: "Tabs are transient. If you exceed your limit (default: 5), StoicFocus shows a red warning (popup + in-page) with all open tabs and lets you close them yourself. No auto-closing. Pinned tabs are still safe.", icon: Layers },
                    { title: "Monochrome Mode", desc: "Dopamine detox. During focus sessions, the entire internet is rendered in grayscale to reduce visual stimulation.", icon: EyeOff },
                    { title: "Hardcore Focus", desc: "To pause or disable protection, you must solve a chess puzzle. Incorrect answers lock you in.", icon: Zap },
                    { title: "In-Page Blocker", desc: "A floating 'BLOCK SITE' button appears on every webpage, allowing for immediate boundary setting without opening the dashboard.", icon: MousePointerClick },
@@ -885,7 +886,7 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                   </div>
                    
                    <div className="p-8 border-b border-zinc-200 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                      <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><Layers className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Memento Mori Tabs</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Auto-close old tabs</p></div></div>
+                     <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><Layers className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Memento Mori Tabs</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Warn when over limit; you choose what to close</p></div></div>
                       <div className="flex items-center gap-4">
                         <button onClick={() => onUpdateSettings({...settings, mementoMoriEnabled: !settings.mementoMoriEnabled})} className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.mementoMoriEnabled ? 'bg-zinc-900' : 'bg-white'}`}><div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.mementoMoriEnabled ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} /></button>
                         {settings.mementoMoriEnabled && (

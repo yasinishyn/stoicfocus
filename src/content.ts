@@ -1,5 +1,6 @@
 // Content Script for StoicFocus Extension
 import { safeStorageLocalSet } from './storageHelpers';
+import { getInitialCollapseState, setCollapseState } from './blockButtonUtils';
 
 interface AppSettings {
   enabled: boolean;
@@ -7,6 +8,14 @@ interface AppSettings {
   doomScrollLimit: number;
   monochromeMode: boolean;
   mementoMoriEnabled: boolean;
+  frictionDurationMinutes: number;
+  hardcoreMode: boolean;
+  focusDuration: number;
+  breakDuration: number;
+  negativeVisualization: boolean;
+  soundEffects: boolean;
+  tabLimit: number;
+  geminiApiKey: string;
 }
 
 interface BlockedSite {
@@ -19,6 +28,20 @@ interface BlockedSite {
 
 interface CategoryDefinitions {
   [key: string]: string[];
+}
+
+interface TabSummary {
+  count: number;
+  limit: number;
+  overLimit: boolean;
+  tabs: Array<{ id: number; title: string; url: string; usage?: number }>;
+}
+
+interface HiddenStates {
+  blockButton: Record<string, boolean>;
+  tabManager: Record<string, boolean>;
+  notificationsHidden?: boolean;
+  blockButtonCollapsed?: Record<string, boolean>;
 }
 
 // Check if extension context is valid
@@ -151,58 +174,32 @@ const createBlockButton = (): HTMLElement => {
   const button = document.createElement('div');
   button.id = 'stoicfocus-block-button';
   button.innerHTML = `
-    <button style="
-      position: fixed;
-      bottom: 24px;
-      right: 24px;
-      z-index: 2147483647;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 12px 16px;
-      min-width: 156px;
-      min-height: 48px;
-      background-color: #dc2626;
-      color: #ffffff;
-      border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 8px;
-      font-family: 'Space Mono', monospace;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      cursor: pointer;
-      transition: all 0.2s ease;
-      box-shadow: 0 10px 20px rgba(0,0,0,0.25);
-      transform: translateZ(0);
-      letter-spacing: 0.06em;
-      line-height: 1;
-      filter: none !important;
-      -webkit-filter: none !important;
-      mix-blend-mode: normal !important;
-      isolation: isolate !important;
-    ">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="stoicfocus-block-inner">
+      <button class="stoicfocus-block-main">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2" fill="none"/>
       </svg>
-      <span style="white-space: nowrap;">BLOCK SITE</span>
+        <span style="white-space: nowrap;">BLOCK SITE</span>
     </button>
-    <div class="stoicfocus-block-handle" title="Toggle block button">&#9654;</div>
+      <div class="stoicfocus-block-handle" title="Hide/Show block button">&#187;</div>
+    </div>
   `;
   
   const btn = button.querySelector('button');
   const handle = button.querySelector('.stoicfocus-block-handle') as HTMLElement | null;
-  let collapsed = blockButtonCollapsed;
+  let collapsed = getInitialCollapseState(currentHost, hiddenStates, blockButtonCollapsed);
 
   const setCollapsed = (state: boolean) => {
     collapsed = state;
     blockButtonCollapsed = state;
+    hiddenStates = setCollapseState(currentHost, hiddenStates, state) as HiddenStates;
+    saveHiddenStates({ blockButtonCollapsed: hiddenStates.blockButtonCollapsed });
     if (collapsed) {
       button.classList.add('stoicfocus-collapsed');
-      if (handle) handle.innerHTML = '&#9664;'; // left arrow
+      if (handle) handle.innerHTML = '&#171;'; // <<
     } else {
       button.classList.remove('stoicfocus-collapsed');
-      if (handle) handle.innerHTML = '&#9654;'; // right arrow
+      if (handle) handle.innerHTML = '&#187;'; // >>
     }
   };
 
@@ -214,65 +211,63 @@ const createBlockButton = (): HTMLElement => {
   }
 
   if (btn) {
-    btn.addEventListener('click', async () => {
-      const currentUrl = window.location.href;
-      try {
-        if (!isExtensionContextValid()) {
-          console.warn('Extension context invalidated. Please reload the page.');
-          return;
-        }
-        
-        const url = new URL(currentUrl);
-        const domain = url.hostname;
-        // Apply monochrome immediately to avoid flicker while redirecting
-        applyMonochrome(true);
-        
-        // Get current blocked sites
-        const result = await safeStorageGet('blockedSites');
-        const blockedSites = result.blockedSites || [];
-        
-        // Check if already blocked
-        const alreadyBlocked = blockedSites.some((s: BlockedSite) => 
-          s.domain === domain && s.listType === 'blacklist'
-        );
-        
-        if (!alreadyBlocked) {
-          const newSite = {
-            id: Math.random().toString(36).substr(2, 9),
-            domain: domain,
-            type: 'domain' as const,
-            category: 'custom',
-            listType: 'blacklist' as const,
-            redirectCount: 0
-          };
-          blockedSites.push(newSite);
-          await safeStorageSet({ blockedSites });
-          // Redirect immediately to blocked page
-          const blockedUrl = safeRuntimeGetURL(`blocked.html?url=${encodeURIComponent(currentUrl)}&mode=strict`);
-          if (blockedUrl) {
-            window.location.href = blockedUrl;
-          } else {
-          window.location.reload();
-          }
-        }
-      } catch (e) {
-        if (e.message && !e.message.includes('Extension context invalidated')) {
-        console.error('Error blocking site:', e);
-        }
-      }
-    });
+    btn.addEventListener('click', blockCurrentPage);
   }
+
+  // Initialize collapsed state for current domain
+  setCollapsed(collapsed);
   
   return button;
 };
 
 const ensureBlockButton = (recreate = false) => {
   if (!isExtensionContextValid()) return;
+  if (!settingsEnabled) return;
+  ensureFixedStyles();
+  if (hiddenStates.blockButton[currentHost]) {
+    ensureBlockButtonRestore();
+    return;
+  }
   const existing = document.getElementById('stoicfocus-block-button');
   if (existing && !recreate) return;
   if (existing && recreate) existing.remove();
   const btn = createBlockButton();
   document.body.appendChild(btn);
+  ensureBlockButtonRestore();
+};
+
+let blockButtonRestore: HTMLDivElement | null = null;
+  const ensureBlockButtonRestore = () => {
+  if (!hiddenStates.blockButton[currentHost]) {
+    if (blockButtonRestore) blockButtonRestore.remove();
+    blockButtonRestore = null;
+    return;
+  }
+  if (!blockButtonRestore) {
+    blockButtonRestore = document.createElement('div');
+    blockButtonRestore.id = 'stoicfocus-block-button-restore';
+    blockButtonRestore.style.position = 'fixed';
+    blockButtonRestore.style.bottom = '24px';
+    blockButtonRestore.style.right = '24px';
+    blockButtonRestore.style.zIndex = '2147483647';
+    blockButtonRestore.style.background = '#dc2626';
+    blockButtonRestore.style.color = '#fff';
+    blockButtonRestore.style.padding = '10px 12px';
+    blockButtonRestore.style.borderRadius = '6px';
+    blockButtonRestore.style.fontFamily = '"Space Mono", monospace';
+    blockButtonRestore.style.fontSize = '11px';
+    blockButtonRestore.style.fontWeight = '700';
+    blockButtonRestore.style.cursor = 'pointer';
+    blockButtonRestore.style.boxShadow = '0 8px 16px rgba(0,0,0,0.22)';
+    blockButtonRestore.textContent = 'Show BLOCK button';
+    blockButtonRestore.addEventListener('click', async () => {
+      hiddenStates.blockButton[currentHost] = false;
+      await saveHiddenStates({ blockButton: hiddenStates.blockButton });
+      ensureBlockButtonRestore();
+      ensureBlockButton(true);
+    });
+    document.body.appendChild(blockButtonRestore);
+  }
 };
 
 // Doom scroll detection
@@ -289,42 +284,82 @@ const handleScroll = async () => {
   const pagesScrolled = scrollTop / clientHeight;
   
   if (pagesScrolled > settings.doomScrollLimit) {
+    if (hiddenStates.notificationsHidden) return;
     // Show doom scroll alert
+    const existingAlert = document.getElementById('stoicfocus-doom-alert');
+    if (existingAlert) return;
     const alert = document.createElement('div');
     alert.id = 'stoicfocus-doom-alert';
     alert.style.cssText = `
       position: fixed;
-      top: 20px;
-      right: 20px;
+      top: 56px;
+      right: 10px;
       z-index: 999998;
       background-color: #dc2626;
       color: white;
-      padding: 16px 20px;
-      border-radius: 4px;
+      padding: 8px 10px;
+      border-radius: 6px;
       font-family: 'Space Mono', monospace;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: bold;
       text-transform: uppercase;
       box-shadow: 0 4px 6px rgba(0,0,0,0.2);
       animation: pulse 2s infinite;
     `;
     alert.textContent = 'DOOM SCROLL DETECTED';
+
+    const actions = document.createElement('div');
+    actions.style.display = 'flex';
+    actions.style.alignItems = 'center';
+    actions.style.gap = '6px';
+
+    const blockActionBtn = document.createElement('button');
+    blockActionBtn.textContent = 'Block site';
+    blockActionBtn.style.border = '1px solid #fff';
+    blockActionBtn.style.background = '#b91c1c';
+    blockActionBtn.style.color = '#fff';
+    blockActionBtn.style.fontWeight = '700';
+    blockActionBtn.style.fontSize = '10px';
+    blockActionBtn.style.padding = '4px 8px';
+    blockActionBtn.style.borderRadius = '6px';
+    blockActionBtn.style.cursor = 'pointer';
+    blockActionBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await blockCurrentPage();
+    });
+
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.style.border = 'none';
+    closeBtn.style.background = 'transparent';
+    closeBtn.style.color = '#fff';
+    closeBtn.style.fontWeight = '900';
+    closeBtn.style.fontSize = '12px';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      alert.remove();
+      hiddenStates.notificationsHidden = true;
+      await saveHiddenStates({ notificationsHidden: true });
+      ensureNotificationRestore();
+    });
+    actions.appendChild(blockActionBtn);
+    actions.appendChild(closeBtn);
+    alert.appendChild(actions);
+
     document.body.appendChild(alert);
     
     // Update block button to show alert state
-    const blockBtn = document.getElementById('stoicfocus-block-button');
-    if (blockBtn) {
-      const btn = blockBtn.querySelector('button');
+    const blockButtonEl = document.getElementById('stoicfocus-block-button');
+    if (blockButtonEl) {
+      const btn = blockButtonEl.querySelector('button');
       if (btn) {
         btn.style.backgroundColor = '#dc2626';
         btn.style.animation = 'pulse 2s infinite';
       }
     }
     
-    // Remove alert after 5 seconds
-    setTimeout(() => {
-      alert.remove();
-    }, 5000);
+    // stays until user closes
   }
 };
 
@@ -354,6 +389,108 @@ const domainsMatch = (a: string, b: string) => {
 
 let isWhitelisted = false;
 let blockButtonCollapsed = false;
+let tabSummaryState: TabSummary | null = null;
+let tabAlertEl: HTMLDivElement | null = null;
+let tabListExpanded = false;
+const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
+let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, notificationsHidden: false, blockButtonCollapsed: {} };
+let settingsEnabled = true;
+let notifyRestore: HTMLDivElement | null = null;
+
+const loadHiddenStates = async (): Promise<HiddenStates> => {
+  try {
+    const res = await safeStorageLocalGet('hiddenStates');
+    hiddenStates = {
+      blockButton: {},
+      tabManager: {},
+      notificationsHidden: false,
+      blockButtonCollapsed: {},
+      ...(res.hiddenStates || {})
+    };
+  } catch {
+    hiddenStates = { blockButton: {}, tabManager: {}, notificationsHidden: false, blockButtonCollapsed: {} };
+  }
+  return hiddenStates;
+};
+
+const saveHiddenStates = async (patch: Partial<HiddenStates>) => {
+  hiddenStates = { ...hiddenStates, ...patch };
+  try {
+    await safeStorageLocalSet({ hiddenStates });
+  } catch {
+    // ignore
+  }
+};
+
+const blockCurrentPage = async () => {
+  const currentUrl = window.location.href;
+  try {
+    if (!isExtensionContextValid()) {
+      console.warn('Extension context invalidated. Please reload the page.');
+      return;
+    }
+    const url = new URL(currentUrl);
+    const domain = url.hostname;
+    applyMonochrome(true);
+    const result = await safeStorageGet('blockedSites');
+    const blockedSites = result.blockedSites || [];
+    const alreadyBlocked = blockedSites.some((s: BlockedSite) => s.domain === domain && s.listType === 'blacklist');
+    if (!alreadyBlocked) {
+      const newSite = {
+        id: Math.random().toString(36).substr(2, 9),
+        domain: domain,
+        type: 'domain' as const,
+        category: 'custom',
+        listType: 'blacklist' as const,
+        redirectCount: 0
+      };
+      blockedSites.push(newSite);
+      await safeStorageSet({ blockedSites });
+      const blockedUrl = safeRuntimeGetURL(`blocked.html?url=${encodeURIComponent(currentUrl)}&mode=strict`);
+      if (blockedUrl) {
+        window.location.href = blockedUrl;
+      } else {
+        window.location.reload();
+      }
+    }
+  } catch (e: any) {
+    if (!e?.message?.includes('Extension context invalidated')) {
+      console.error('Error blocking site:', e);
+    }
+  }
+};
+
+const ensureNotificationRestore = () => {
+  if (!hiddenStates.notificationsHidden) {
+    if (notifyRestore) notifyRestore.remove();
+    notifyRestore = null;
+    return;
+  }
+  if (!notifyRestore) {
+    notifyRestore = document.createElement('div');
+    notifyRestore.id = 'stoicfocus-notify-restore';
+    notifyRestore.style.position = 'fixed';
+    notifyRestore.style.top = '10px';
+    notifyRestore.style.left = '10px';
+    notifyRestore.style.zIndex = '2147483647';
+    notifyRestore.style.background = '#dc2626';
+    notifyRestore.style.color = '#fff';
+    notifyRestore.style.padding = '6px 8px';
+    notifyRestore.style.borderRadius = '9999px';
+    notifyRestore.style.fontFamily = '"Space Mono", monospace';
+    notifyRestore.style.fontSize = '10px';
+    notifyRestore.style.fontWeight = '700';
+    notifyRestore.style.cursor = 'pointer';
+    notifyRestore.style.boxShadow = '0 6px 12px rgba(0,0,0,0.18)';
+    notifyRestore.textContent = 'Show notifications';
+    notifyRestore.addEventListener('click', async () => {
+      hiddenStates.notificationsHidden = false;
+      await saveHiddenStates({ notificationsHidden: false });
+      ensureNotificationRestore();
+    });
+    document.body.appendChild(notifyRestore);
+  }
+};
 
 const computeListFlags = (
   blockedSites: BlockedSite[],
@@ -377,6 +514,188 @@ const computeListFlags = (
   return { inBlock, inGrey, inWhite };
 };
 
+const ensureTabAlert = (summary: TabSummary | null) => {
+  tabSummaryState = summary;
+  if (!summary || !summary.overLimit || hiddenStates.tabManager[currentHost]) {
+    if (tabAlertEl) tabAlertEl.remove();
+    tabAlertEl = null;
+    ensureTabRestore();
+    return;
+  }
+
+  if (!tabAlertEl) {
+    tabAlertEl = document.createElement('div');
+    tabAlertEl.id = 'stoicfocus-tab-alert';
+    tabAlertEl.style.position = 'fixed';
+    tabAlertEl.style.top = '10px';
+    tabAlertEl.style.right = '10px';
+    tabAlertEl.style.zIndex = '2147483647';
+    tabAlertEl.style.background = '#dc2626';
+    tabAlertEl.style.color = '#ffffff';
+    tabAlertEl.style.padding = '8px 10px';
+    tabAlertEl.style.borderRadius = '8px';
+    tabAlertEl.style.fontFamily = '"Space Mono", monospace';
+    tabAlertEl.style.fontSize = '11px';
+    tabAlertEl.style.boxShadow = '0 12px 28px rgba(0,0,0,0.22)';
+    tabAlertEl.style.mixBlendMode = 'normal';
+    tabAlertEl.style.isolation = 'isolate';
+    tabAlertEl.style.minWidth = '160px';
+
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    header.style.justifyContent = 'space-between';
+    header.style.gap = '8px';
+    header.style.fontWeight = '700';
+    header.textContent = 'Tabs';
+
+    const count = document.createElement('span');
+    count.id = 'stoicfocus-tab-count';
+    count.style.fontWeight = '900';
+    count.style.letterSpacing = '0.08em';
+    header.appendChild(count);
+
+    const headerActions = document.createElement('div');
+    headerActions.style.display = 'flex';
+    headerActions.style.alignItems = 'center';
+    headerActions.style.gap = '6px';
+
+    const toggle = document.createElement('button');
+    toggle.textContent = 'Show';
+    toggle.style.border = '1px solid #ffffff';
+    toggle.style.background = 'transparent';
+    toggle.style.color = '#ffffff';
+    toggle.style.fontWeight = '700';
+    toggle.style.fontSize = '10px';
+    toggle.style.padding = '4px 8px';
+    toggle.style.borderRadius = '6px';
+    toggle.style.cursor = 'pointer';
+    toggle.addEventListener('click', () => {
+      tabListExpanded = !tabListExpanded;
+      toggle.textContent = tabListExpanded ? 'Hide' : 'Show';
+      const list = tabAlertEl?.querySelector<HTMLDivElement>('#stoicfocus-tab-list');
+      if (list) list.style.display = tabListExpanded ? 'block' : 'none';
+    });
+    headerActions.appendChild(toggle);
+
+    const close = document.createElement('button');
+    close.textContent = '×';
+    close.style.border = 'none';
+    close.style.background = 'transparent';
+    close.style.color = '#ffffff';
+    close.style.fontWeight = '900';
+    close.style.fontSize = '12px';
+    close.style.cursor = 'pointer';
+    close.addEventListener('click', async () => {
+      tabAlertEl?.remove();
+      tabAlertEl = null;
+      hiddenStates.tabManager[currentHost] = true;
+      await saveHiddenStates({ tabManager: hiddenStates.tabManager });
+      ensureTabRestore();
+    });
+    headerActions.appendChild(close);
+
+    header.appendChild(headerActions);
+
+
+    const list = document.createElement('div');
+    list.id = 'stoicfocus-tab-list';
+    list.style.display = 'none';
+    list.style.marginTop = '6px';
+    list.style.background = '#b91c1c';
+    list.style.borderRadius = '6px';
+    list.style.maxHeight = '180px';
+    list.style.overflowY = 'auto';
+    list.style.padding = '5px';
+    list.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,0.12)';
+
+    tabAlertEl.appendChild(header);
+    tabAlertEl.appendChild(list);
+    document.body.appendChild(tabAlertEl);
+  }
+
+  const countEl = tabAlertEl!.querySelector<HTMLSpanElement>('#stoicfocus-tab-count');
+  if (countEl) {
+    countEl.textContent = `${summary.count}/${summary.limit}`;
+  }
+
+  const listEl = tabAlertEl!.querySelector<HTMLDivElement>('#stoicfocus-tab-list');
+  if (listEl) {
+    listEl.innerHTML = '';
+    summary.tabs.forEach((t) => {
+      const row = document.createElement('div');
+      row.style.display = 'flex';
+      row.style.alignItems = 'center';
+      row.style.justifyContent = 'space-between';
+      row.style.gap = '6px';
+      row.style.padding = '3px 0';
+
+      const info = document.createElement('div');
+      info.style.display = 'flex';
+      info.style.flexDirection = 'column';
+      info.style.flex = '1';
+      info.style.minWidth = '0';
+
+      const title = document.createElement('div');
+      title.textContent = t.title || t.url;
+      title.style.fontWeight = '700';
+      title.style.fontSize = '10px';
+      title.style.whiteSpace = 'nowrap';
+      title.style.overflow = 'hidden';
+      title.style.textOverflow = 'ellipsis';
+      info.appendChild(title);
+
+      const meta = document.createElement('div');
+      meta.textContent = `${t.url} • ${t.usage || 0}x`;
+      meta.style.fontSize = '9px';
+      meta.style.opacity = '0.85';
+      meta.style.whiteSpace = 'nowrap';
+      meta.style.overflow = 'hidden';
+      meta.style.textOverflow = 'ellipsis';
+      info.appendChild(meta);
+
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '×';
+      closeBtn.style.border = '1px solid #fff';
+      closeBtn.style.background = '#991b1b';
+      closeBtn.style.color = '#fff';
+      closeBtn.style.fontWeight = '900';
+      closeBtn.style.fontSize = '10px';
+      closeBtn.style.width = '22px';
+      closeBtn.style.height = '22px';
+      closeBtn.style.borderRadius = '6px';
+      closeBtn.style.cursor = 'pointer';
+      closeBtn.addEventListener('click', () => {
+        if (isExtensionContextValid()) {
+          chrome.runtime.sendMessage({ type: 'CLOSE_TAB', tabId: t.id });
+        }
+      });
+
+      row.appendChild(info);
+      row.appendChild(closeBtn);
+      listEl.appendChild(row);
+    });
+    listEl.style.display = tabListExpanded ? 'block' : 'none';
+  }
+};
+
+const initTabAlertWatcher = async () => {
+  try {
+    const local = await safeStorageLocalGet('tabSummary');
+    ensureTabAlert(local.tabSummary || null);
+  } catch {
+    // ignore
+  }
+
+  if (isExtensionContextValid()) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.tabSummary) {
+        ensureTabAlert(changes.tabSummary.newValue || null);
+      }
+    });
+  }
+};
+
 // Inject fixed-position styles for StoicFocus UI to avoid filter/height side-effects
 const ensureFixedStyles = () => {
   if (document.getElementById('stoicfocus-fixed-styles')) return;
@@ -395,47 +714,86 @@ const ensureFixedStyles = () => {
       isolation: isolate !important;
       background: transparent !important;
       display: inline-flex !important;
-      gap: 8px !important;
       align-items: center !important;
       transition: transform 0.2s ease, opacity 0.2s ease !important;
     }
     #stoicfocus-block-button.stoicfocus-collapsed {
-      transform: translateX(calc(100% - 18px)) translateZ(0) !important;
-      opacity: 0.92 !important;
+      transform: translateX(calc(100% - 20px)) translateZ(0) !important;
+      opacity: 1 !important;
     }
-    #stoicfocus-block-button button {
+    #stoicfocus-block-button .stoicfocus-block-inner {
+      display: inline-flex !important;
+      align-items: stretch !important;
       position: relative !important;
-      inset: auto !important;
-      z-index: 1 !important;
-      transform: translateZ(0) !important;
-      mix-blend-mode: normal !important;
-      isolation: isolate !important;
+      background: transparent !important;
+      gap: 0 !important;
     }
-    #stoicfocus-block-button .stoicfocus-block-handle {
-      width: 32px !important;
-      height: 48px !important;
+    #stoicfocus-block-button .stoicfocus-block-main {
+      position: relative !important;
+      z-index: 1 !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
+      gap: 6px !important;
+      padding: 8px 10px !important;
+      min-width: 120px !important;
+      min-height: 38px !important;
+      background-color: #dc2626 !important;
+      color: #ffffff !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-radius: 7px 0 0 7px !important;
+      font-family: 'Space Mono', monospace !important;
+      font-size: 10px !important;
+      font-weight: 700 !important;
+      text-transform: uppercase !important;
+      cursor: pointer !important;
+      transition: all 0.2s ease !important;
+      box-shadow: 0 6px 12px rgba(0,0,0,0.2) !important;
+      transform: translateZ(0) !important;
+      letter-spacing: 0.05em !important;
+      line-height: 1 !important;
+      filter: none !important;
+      -webkit-filter: none !important;
+      mix-blend-mode: normal !important;
+      isolation: isolate !important;
+    }
+    #stoicfocus-block-button .stoicfocus-block-main svg {
+      flex-shrink: 0 !important;
+    }
+    #stoicfocus-block-button .stoicfocus-block-handle {
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      width: 26px !important;
+      height: 38px !important;
       background: #dc2626 !important;
       color: #ffffff !important;
-      border-radius: 6px !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-left: none !important;
+      border-radius: 0 7px 7px 0 !important;
       cursor: pointer !important;
-      box-shadow: 0 8px 16px rgba(0,0,0,0.18) !important;
+      box-shadow: 0 6px 12px rgba(0,0,0,0.2) !important;
       font-family: 'Space Mono', monospace !important;
-      font-size: 16px !important;
+      font-size: 14px !important;
       font-weight: 700 !important;
       user-select: none !important;
       mix-blend-mode: normal !important;
       isolation: isolate !important;
       transform: translateZ(0) !important;
-      border: 1px solid rgba(255,255,255,0.1) !important;
+    }
+    #stoicfocus-block-button.stoicfocus-collapsed .stoicfocus-block-main {
+      display: none !important;
+    }
+    #stoicfocus-block-button.stoicfocus-collapsed .stoicfocus-block-handle {
+      border-radius: 7px !important;
+      border-left: 1px solid rgba(255,255,255,0.1) !important;
+      transform: translateZ(0) !important;
     }
     #stoicfocus-doom-alert,
     #stoicfocus-monochrome-notification {
       position: fixed !important;
-      top: 20px !important;
-      right: 20px !important;
+      top: 56px !important;
+      right: 10px !important;
       left: auto !important;
       z-index: 2147483647 !important;
       transform: translateZ(0) !important;
@@ -468,6 +826,7 @@ const ensureMonochromeLayer = (enabled: boolean) => {
 
 // Show monochrome notification
 const showMonochromeNotification = () => {
+  if (hiddenStates.notificationsHidden) return;
   // Remove existing notification if any
   const existing = document.getElementById('stoicfocus-monochrome-notification');
   if (existing) {
@@ -478,21 +837,40 @@ const showMonochromeNotification = () => {
   notification.id = 'stoicfocus-monochrome-notification';
   notification.style.cssText = `
     position: fixed;
-    top: 20px;
-    right: 20px;
+    top: 10px;
+    right: 10px;
     z-index: 2147483647;
     background-color: #dc2626;
     color: white;
-    padding: 16px 20px;
-    border-radius: 4px;
+    padding: 8px 10px;
+    border-radius: 6px;
     font-family: 'Space Mono', monospace;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: bold;
     text-transform: uppercase;
     box-shadow: 0 4px 6px rgba(0,0,0,0.2);
     animation: pulse 2s infinite;
   `;
   notification.textContent = 'STOIC MONOCHROME MODE ACTIVATED';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '×';
+  closeBtn.style.border = 'none';
+  closeBtn.style.background = 'transparent';
+  closeBtn.style.color = '#fff';
+  closeBtn.style.fontWeight = '900';
+  closeBtn.style.fontSize = '12px';
+  closeBtn.style.marginLeft = '10px';
+  closeBtn.style.cursor = 'pointer';
+  closeBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    notification.remove();
+    hiddenStates.notificationsHidden = true;
+    await saveHiddenStates({ notificationsHidden: true });
+    ensureNotificationRestore();
+  });
+  notification.appendChild(closeBtn);
+
   document.body.appendChild(notification);
   
   // Remove notification after 5 seconds
@@ -627,14 +1005,54 @@ const applyMonochrome = async (immediate = false) => {
 };
 
 // Initialize content script
+const ensureTabRestore = () => {
+  if (!hiddenStates.tabManager[currentHost]) {
+    const existing = document.getElementById('stoicfocus-tab-restore');
+    if (existing) existing.remove();
+    return;
+  }
+  let pill = document.getElementById('stoicfocus-tab-restore') as HTMLDivElement | null;
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.id = 'stoicfocus-tab-restore';
+    pill.style.position = 'fixed';
+    pill.style.top = '10px';
+    pill.style.right = '10px';
+    pill.style.zIndex = '2147483647';
+    pill.style.background = '#dc2626';
+    pill.style.color = '#fff';
+    pill.style.padding = '6px 8px';
+    pill.style.borderRadius = '6px';
+    pill.style.fontFamily = '"Space Mono", monospace';
+    pill.style.fontSize = '10px';
+    pill.style.fontWeight = '700';
+    pill.style.cursor = 'pointer';
+    pill.style.boxShadow = '0 6px 12px rgba(0,0,0,0.18)';
+    pill.textContent = 'Show Tabs';
+    pill.addEventListener('click', async () => {
+      hiddenStates.tabManager[currentHost] = false;
+      await saveHiddenStates({ tabManager: hiddenStates.tabManager });
+      ensureTabRestore();
+      ensureTabAlert(tabSummaryState);
+    });
+    document.body.appendChild(pill);
+  }
+};
+
 const init = async () => {
+  await loadHiddenStates();
+  ensureFixedStyles();
   const settings = await loadSettings();
+  ensureNotificationRestore();
   
   if (!settings.enabled) return;
   
   // Add block button if enabled
   if (settings.showInjectedIcon) {
     ensureBlockButton();
+    // fast re-check in case first render was blocked
+    setTimeout(() => ensureBlockButton(true), 400);
+    setTimeout(() => ensureBlockButton(true), 1500);
   }
   
   // Setup doom scroll detection
@@ -647,6 +1065,9 @@ const init = async () => {
   
   // Apply monochrome mode
   applyMonochrome(false);
+
+  // Show tab warning if over limit (memento mori)
+  initTabAlertWatcher();
   
   // Check for greylist and show typing tax if needed
   const { blockedSites, categoryDefinitions } = await loadBlockedSites();
@@ -717,7 +1138,8 @@ if (document.readyState === 'loading') {
 const ensureUI = async (forceRecreateButton = false) => {
   try {
     const settings = await loadSettings();
-    if (settings.showInjectedIcon) {
+    settingsEnabled = !!settings.enabled;
+    if (settings.enabled && settings.showInjectedIcon) {
       ensureBlockButton(forceRecreateButton);
     } else {
       const existing = document.getElementById('stoicfocus-block-button');
@@ -749,8 +1171,10 @@ if (isExtensionContextValid()) {
     chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync') {
         if (changes.settings) {
+          settingsEnabled = !!(changes.settings.newValue?.enabled ?? settingsEnabled);
           monochromeApplied = false;
           applyMonochrome(false);
+          ensureUI(true);
         }
         if (changes.blockedSites || changes.categoryDefinitions) {
           monochromeApplied = false;
