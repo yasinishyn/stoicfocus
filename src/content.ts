@@ -41,7 +41,6 @@ interface TabSummary {
 interface HiddenStates {
   blockButton: Record<string, boolean>;
   tabManager: Record<string, boolean>;
-  notificationsHidden?: boolean;
   blockButtonCollapsed?: Record<string, boolean>;
 }
 
@@ -224,6 +223,11 @@ const createBlockButton = (): HTMLElement => {
 const ensureBlockButton = (recreate = false) => {
   if (!isExtensionContextValid()) return;
   if (!settingsEnabled) return;
+  if (isWhitelisted) {
+    const existing = document.getElementById('stoicfocus-block-button');
+    if (existing) existing.remove();
+    return;
+  }
   ensureFixedStyles();
   if (hiddenStates.blockButton[currentHost]) {
     ensureBlockButtonRestore();
@@ -279,6 +283,11 @@ let scrollTimeout: number | null = null;
 const handleScroll = async () => {
   const settings = await loadSettings();
   if (!settings.enabled) return;
+  if (isWhitelisted) {
+    const existingAlert = document.getElementById('stoicfocus-doom-alert');
+    if (existingAlert) existingAlert.remove();
+    return;
+  }
   
   const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
   const clientHeight = window.innerHeight;
@@ -443,7 +452,7 @@ let tabSummaryState: TabSummary | null = null;
 let tabAlertEl: HTMLDivElement | null = null;
 let tabListExpanded = false;
 const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
-let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, notificationsHidden: false, blockButtonCollapsed: {} };
+let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {} };
 let settingsEnabled = true;
 let doomDismissedOnce = false;
 
@@ -453,12 +462,11 @@ const loadHiddenStates = async (): Promise<HiddenStates> => {
     hiddenStates = {
       blockButton: {},
       tabManager: {},
-      notificationsHidden: false,
       blockButtonCollapsed: {},
       ...(res.hiddenStates || {})
     };
   } catch {
-    hiddenStates = { blockButton: {}, tabManager: {}, notificationsHidden: false, blockButtonCollapsed: {} };
+    hiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {} };
   }
   return hiddenStates;
 };
@@ -1091,6 +1099,17 @@ const init = async () => {
   await loadHiddenStates();
   ensureFixedStyles();
   const settings = await loadSettings();
+  // refresh whitelist on init
+  try {
+    const { blockedSites, categoryDefinitions } = await loadBlockedSites();
+    const currentDomain = window.location.hostname.replace('www.', '').toLowerCase();
+    const { inBlock, inGrey, inWhite } = computeListFlags(blockedSites, categoryDefinitions, currentDomain);
+    isWhitelisted = inWhite && !inBlock && !inGrey;
+    if (isWhitelisted) {
+      const existingAlert = document.getElementById('stoicfocus-doom-alert');
+      if (existingAlert) existingAlert.remove();
+    }
+  } catch {}
   
   if (!settings.enabled) return;
   
