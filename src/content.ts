@@ -17,6 +17,7 @@ interface AppSettings {
   soundEffects: boolean;
   tabLimit: number;
   geminiApiKey: string;
+  showPinnedTabs?: boolean;
 }
 
 interface BlockedSite {
@@ -35,13 +36,14 @@ interface TabSummary {
   count: number;
   limit: number;
   overLimit: boolean;
-  tabs: Array<{ id: number; title: string; url: string; usage?: number }>;
+  tabs: Array<{ id: number; title: string; url: string; usage?: number; pinned?: boolean; lastAccessed?: number }>;
 }
 
 interface HiddenStates {
   blockButton: Record<string, boolean>;
   tabManager: Record<string, boolean>;
   blockButtonCollapsed?: Record<string, boolean>;
+  showPinned?: boolean;
 }
 
 // Check if extension context is valid
@@ -127,7 +129,8 @@ const loadSettings = async (): Promise<AppSettings> => {
       negativeVisualization: true,
       soundEffects: true,
       tabLimit: 5,
-      geminiApiKey: ''
+      geminiApiKey: '',
+      showPinnedTabs: true
     };
   } catch (e) {
     // Return defaults if error
@@ -144,7 +147,8 @@ const loadSettings = async (): Promise<AppSettings> => {
       negativeVisualization: true,
       soundEffects: true,
       tabLimit: 5,
-      geminiApiKey: ''
+      geminiApiKey: '',
+      showPinnedTabs: true
     };
   }
 };
@@ -452,7 +456,7 @@ let tabSummaryState: TabSummary | null = null;
 let tabAlertEl: HTMLDivElement | null = null;
 let tabListExpanded = false;
 const currentHost = window.location.hostname.replace(/^www\./, '').toLowerCase();
-let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {} };
+let hiddenStates: HiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {}, showPinned: true };
 let settingsEnabled = true;
 let doomDismissedOnce = false;
 
@@ -463,10 +467,11 @@ const loadHiddenStates = async (): Promise<HiddenStates> => {
       blockButton: {},
       tabManager: {},
       blockButtonCollapsed: {},
+      showPinned: true,
       ...(res.hiddenStates || {})
     };
   } catch {
-    hiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {} };
+    hiddenStates = { blockButton: {}, tabManager: {}, blockButtonCollapsed: {}, showPinned: true };
   }
   return hiddenStates;
 };
@@ -663,6 +668,7 @@ const ensureTabAlert = (summary: TabSummary | null) => {
     list.style.background = '#b91c1c';
     list.style.borderRadius = '6px';
     list.style.maxHeight = '180px';
+    list.style.maxWidth = '420px';
     list.style.overflowY = 'auto';
     list.style.padding = '5px';
     list.style.boxShadow = 'inset 0 0 0 1px rgba(255,255,255,0.12)';
@@ -680,19 +686,29 @@ const ensureTabAlert = (summary: TabSummary | null) => {
   const listEl = tabAlertEl!.querySelector<HTMLDivElement>('#stoicfocus-tab-list');
   if (listEl) {
     listEl.innerHTML = '';
-    summary.tabs.forEach((t) => {
+    const normalizeUrlKey = (u: string) => u.split('#')[0];
+    const filteredTabs = summary.tabs.filter(t => hiddenStates.showPinned ? true : !t.pinned);
+    const urlCounts: Record<string, number> = {};
+    filteredTabs.forEach((t) => {
+      const key = normalizeUrlKey(t.url || '');
+      urlCounts[key] = (urlCounts[key] || 0) + 1;
+    });
+
+    filteredTabs.forEach((t) => {
       const row = document.createElement('div');
       row.style.display = 'flex';
       row.style.alignItems = 'center';
       row.style.justifyContent = 'space-between';
       row.style.gap = '6px';
       row.style.padding = '3px 0';
+      row.style.maxWidth = '420px';
 
       const info = document.createElement('div');
       info.style.display = 'flex';
       info.style.flexDirection = 'column';
       info.style.flex = '1';
       info.style.minWidth = '0';
+      info.style.maxWidth = '320px';
 
       const title = document.createElement('div');
       title.textContent = t.title || t.url;
@@ -701,16 +717,61 @@ const ensureTabAlert = (summary: TabSummary | null) => {
       title.style.whiteSpace = 'nowrap';
       title.style.overflow = 'hidden';
       title.style.textOverflow = 'ellipsis';
+      title.style.maxWidth = '320px';
       info.appendChild(title);
 
       const meta = document.createElement('div');
-      meta.textContent = `${t.url} • ${t.usage || 0}x`;
+      const truncatedUrl = t.url.length > 80 ? `${t.url.slice(0, 77)}...` : t.url;
+      meta.textContent = truncatedUrl;
       meta.style.fontSize = '9px';
       meta.style.opacity = '0.85';
       meta.style.whiteSpace = 'nowrap';
       meta.style.overflow = 'hidden';
       meta.style.textOverflow = 'ellipsis';
+      meta.style.maxWidth = '320px';
       info.appendChild(meta);
+
+      // Flags: duplicates, unused age, pinned
+      const flags: string[] = [];
+      const redFlags: string[] = [];
+      const dupCount = urlCounts[normalizeUrlKey(t.url)] || 0;
+      if (dupCount > 1) {
+        redFlags.push(`Duplicate x${dupCount}`);
+      }
+      if (t.lastAccessed) {
+        const ageMs = Date.now() - t.lastAccessed;
+        const mins = Math.floor(ageMs / 60000);
+        if (mins >= 1440) redFlags.push('Unused >1 day');
+        else if (mins >= 60) redFlags.push(`Unused ${Math.floor(mins / 60)}h`);
+        else if (mins >= 10) redFlags.push(`Unused ${mins}m`);
+      }
+      if (t.pinned) {
+        flags.push('Pinned');
+      }
+
+      if (redFlags.length || flags.length) {
+        const flagLine = document.createElement('div');
+        flagLine.style.display = 'flex';
+        flagLine.style.flexWrap = 'wrap';
+        flagLine.style.gap = '6px';
+        flagLine.style.fontSize = '9px';
+        flagLine.style.maxWidth = '320px';
+        redFlags.forEach(f => {
+          const span = document.createElement('span');
+          span.textContent = f;
+          span.style.color = '#ef4444';
+          span.style.fontWeight = '700';
+          flagLine.appendChild(span);
+        });
+        flags.forEach(f => {
+          const span = document.createElement('span');
+          span.textContent = f;
+          span.style.color = '#9ca3af';
+          span.style.fontWeight = '700';
+          flagLine.appendChild(span);
+        });
+        info.appendChild(flagLine);
+      }
 
       const closeBtn = document.createElement('button');
       closeBtn.textContent = '×';
@@ -725,6 +786,7 @@ const ensureTabAlert = (summary: TabSummary | null) => {
       closeBtn.style.cursor = 'pointer';
       closeBtn.addEventListener('click', () => {
         if (isExtensionContextValid()) {
+          chrome.runtime.sendMessage({ type: 'INCREMENT_TABS_WITHERED' }).catch(() => {});
           chrome.runtime.sendMessage({ type: 'CLOSE_TAB', tabId: t.id });
         }
       });
@@ -1099,6 +1161,7 @@ const init = async () => {
   await loadHiddenStates();
   ensureFixedStyles();
   const settings = await loadSettings();
+  hiddenStates.showPinned = settings.showPinnedTabs ?? hiddenStates.showPinned;
   // refresh whitelist on init
   try {
     const { blockedSites, categoryDefinitions } = await loadBlockedSites();
@@ -1237,6 +1300,10 @@ if (isExtensionContextValid()) {
 chrome.storage.onChanged.addListener((changes, areaName) => {
       if (areaName === 'sync') {
         if (changes.settings) {
+          if (changes.settings.newValue && typeof changes.settings.newValue.showPinnedTabs === 'boolean') {
+            hiddenStates.showPinned = changes.settings.newValue.showPinnedTabs;
+            ensureTabAlert(tabSummaryState);
+          }
           settingsEnabled = !!(changes.settings.newValue?.enabled ?? settingsEnabled);
           monochromeApplied = false;
           applyMonochrome(false);

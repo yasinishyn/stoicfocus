@@ -3,6 +3,14 @@
 import { TabSummary } from './types';
 import { computeTabSummary } from './tabUtils';
 
+export const incrementTabsWitheredMetric = async () => {
+  const res = await chrome.storage.local.get('metrics');
+  const current = res.metrics || { interventions: 0, focusScore: 0, tabsWithered: 0, frictionOvercome: 0 };
+  const next = { ...current, tabsWithered: (current.tabsWithered || 0) + 1 };
+  await chrome.storage.local.set({ metrics: next });
+  return next;
+};
+
 interface BlockedSite {
   id: string;
   domain: string;
@@ -45,7 +53,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   focusDuration: 25,
   breakDuration: 5,
   negativeVisualization: true,
-  frictionDurationMinutes: 10
+  frictionDurationMinutes: 10,
+  showPinnedTabs: true
 };
 
 const DEFAULT_CATEGORIES: CategoryDefinitions = {
@@ -198,7 +207,7 @@ const refreshTabSummary = async () => {
   const settings: AppSettings = settingsResult.settings || DEFAULT_SETTINGS;
   const enabled = settings.enabled && settings.mementoMoriEnabled;
 
-  const tabs = await chrome.tabs.query({});
+    const tabs = await chrome.tabs.query({});
   const usage = await getTabUsageCounts();
   const summary = computeTabSummary(
     tabs,
@@ -223,7 +232,7 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName === 'sync' && changes.settings) {
     refreshTabSummary().catch(() => {});
-  }
+    }
 });
 
 // Handle messages from popup and content scripts
@@ -256,6 +265,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     });
     return true;
+  }
+
+  if (message.type === 'INCREMENT_TABS_WITHERED') {
+    incrementTabsWitheredMetric();
   }
 
   if (message.type === 'GET_TAB_SUMMARY') {

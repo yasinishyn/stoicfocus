@@ -20,7 +20,7 @@ export interface TabSummary {
   count: number;
   limit: number;
   overLimit: boolean;
-  tabs: Array<{ id: number; title: string; url: string; active?: boolean; usage?: number }>;
+  tabs: Array<{ id: number; title: string; url: string; active?: boolean; usage?: number; pinned?: boolean; lastAccessed?: number }>;
 }
 
 interface TabLimitSettings {
@@ -44,7 +44,9 @@ export const computeTabSummary = (
     title: t.title || '(untitled)',
     url: t.url || '',
     active: t.active,
-    usage: t.id !== undefined ? usage[t.id] || 0 : 0
+    usage: t.id !== undefined ? usage[t.id] || 0 : 0,
+    pinned: !!t.pinned,
+    lastAccessed: (t as any).lastAccessed
   }));
   return { count, limit, overLimit, tabs: entries };
 };

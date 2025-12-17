@@ -20,7 +20,8 @@ const loadSettings = async (): Promise<AppSettings> => {
     focusDuration: 25,
     breakDuration: 5,
     negativeVisualization: true,
-    frictionDurationMinutes: 10
+    frictionDurationMinutes: 10,
+    showPinnedTabs: true
   };
 };
 

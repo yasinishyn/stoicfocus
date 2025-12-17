@@ -45,6 +45,7 @@ export interface AppSettings {
   breakDuration: number; // in minutes
   negativeVisualization: boolean; // Configurable pre-mortem
   frictionDurationMinutes?: number; // How long greylist friction stays unlocked
+  showPinnedTabs?: boolean;
 }
 
 export interface AppMetrics {
@@ -58,7 +59,7 @@ export interface TabSummary {
   count: number;
   limit: number;
   overLimit: boolean;
-  tabs: Array<{ id: number; title: string; url: string; active?: boolean; usage?: number }>;
+  tabs: Array<{ id: number; title: string; url: string; active?: boolean; usage?: number; pinned?: boolean; lastAccessed?: number }>;
 }
 
 export interface DailyTimeData {

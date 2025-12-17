@@ -96,7 +96,7 @@ const FocusChartCard = React.memo(() => {
           { name: 'MON', value: 0 }, { name: 'TUE', value: 0 }, { name: 'WED', value: 0 },
           { name: 'THU', value: 0 }, { name: 'FRI', value: 0 }, { name: 'SAT', value: 0 }, { name: 'SUN', value: 0 }
         ]);
-        setTotalHours(0);
+        setTotalMinutes(0);
         setTrend(0);
         setAvailableWeeks([{ label: 'CURRENT WEEK', value: 0 }]);
         return;
@@ -279,6 +279,13 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [focusScore, setFocusScore] = useState<number>(metrics.focusScore || 0);
   const [domainCounts, setDomainCounts] = useState<Record<string, number>>({});
+  const [tabLimitInput, setTabLimitInput] = useState<string>(settings.tabLimit?.toString() || '');
+  const [showPinnedTabs, setShowPinnedTabs] = useState<boolean>(settings.showPinnedTabs ?? true);
+
+  useEffect(() => {
+    setTabLimitInput(settings.tabLimit?.toString() || '');
+    setShowPinnedTabs(settings.showPinnedTabs ?? true);
+  }, [settings.tabLimit, settings.showPinnedTabs]);
   
   // Initialize distinct quotes for each tab
   const [blacklistQuote] = useState(() => getRandomQuote());
@@ -864,14 +871,38 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                       <button onClick={() => onUpdateSettings({...settings, hardcoreMode: !settings.hardcoreMode})} className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.hardcoreMode ? 'bg-zinc-900' : 'bg-white'}`}><div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.hardcoreMode ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} /></button>
                   </div>
                   <div className="p-8 border-b border-zinc-200 flex items-center justify-between hover:bg-zinc-50 transition-colors">
-                      <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><MousePointerClick className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">In-Page Blocker</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Show 'Block Site' button & Doom Scroll</p></div></div>
-                      <div className="flex items-center gap-4">
-                        <div className="flex flex-col">
-                            <label className="text-[10px] font-bold uppercase text-zinc-500 mb-1">Doom Limit (Pages)</label>
-                            <input type="number" min="1" max="100" value={settings.doomScrollLimit} onChange={(e) => onUpdateSettings({...settings, doomScrollLimit: Math.max(1, parseInt(e.target.value) || 3)})} className="w-20 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none" />
-                            <span className="text-[10px] text-zinc-400 font-mono mt-1">Number of screen-heights scrolled before alert.</span>
+                      <div className="flex items-center gap-6">
+                        <div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><MousePointerClick className="w-6 h-6" /></div>
+                        <div>
+                          <p className="text-lg font-bold uppercase tracking-tight">In-Page Blocker</p>
+                          <p className="text-xs text-zinc-500 font-mono uppercase mt-1">Show 'Block Site' button & Doom Scroll</p>
+                          <p className="text-[10px] text-zinc-400 font-mono mt-1">* Number of screen-heights scrolled before alert.</p>
                         </div>
-                        <button onClick={() => onUpdateSettings({...settings, showInjectedIcon: !settings.showInjectedIcon})} className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.showInjectedIcon ? 'bg-zinc-900' : 'bg-white'}`}><div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.showInjectedIcon ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} /></button>
+                      </div>
+                      <div className="flex flex-col items-end gap-1">
+                        {settings.showInjectedIcon && (
+                          <div className="flex w-full justify-end">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500 text-right">Pages Length *</span>
+                          </div>
+                        )}
+                      <div className="flex items-center gap-4">
+                          <button
+                            onClick={() => onUpdateSettings({...settings, showInjectedIcon: !settings.showInjectedIcon})}
+                            className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.showInjectedIcon ? 'bg-zinc-900' : 'bg-white'}`}
+                          >
+                            <div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.showInjectedIcon ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} />
+                          </button>
+                          {settings.showInjectedIcon && (
+                            <input
+                              type="number"
+                              min="1"
+                              max="100"
+                              value={settings.doomScrollLimit}
+                              onChange={(e) => onUpdateSettings({...settings, doomScrollLimit: Math.max(1, parseInt(e.target.value) || 3)})}
+                              className="w-20 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none"
+                            />
+                          )}
+                        </div>
                       </div>
                   </div>
                   
@@ -887,11 +918,66 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                    
                    <div className="p-8 border-b border-zinc-200 flex items-center justify-between hover:bg-zinc-50 transition-colors">
                      <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><Layers className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Memento Mori Tabs</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Warn when over limit; you choose what to close</p></div></div>
-                      <div className="flex items-center gap-4">
-                        <button onClick={() => onUpdateSettings({...settings, mementoMoriEnabled: !settings.mementoMoriEnabled})} className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.mementoMoriEnabled ? 'bg-zinc-900' : 'bg-white'}`}><div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.mementoMoriEnabled ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} /></button>
+                      <div className="flex flex-col items-end gap-1">
                         {settings.mementoMoriEnabled && (
-                            <input type="number" min="1" max="50" value={settings.tabLimit} onChange={(e) => onUpdateSettings({...settings, tabLimit: Math.max(1, parseInt(e.target.value) || 1)})} className="w-20 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none" />
+                          <div className="flex justify-end gap-4 w-full">
+                            <span className="text-[10px] font-bold uppercase text-zinc-500 text-right w-24">Show Pinned</span>
+                            <span className="text-[10px] font-bold uppercase text-zinc-500 text-right w-16">Tabs</span>
+                          </div>
                         )}
+                        <div className="flex items-center gap-4">
+                          <button
+                            onClick={() => onUpdateSettings({...settings, mementoMoriEnabled: !settings.mementoMoriEnabled})}
+                            className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${settings.mementoMoriEnabled ? 'bg-zinc-900' : 'bg-white'}`}
+                          >
+                            <div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${settings.mementoMoriEnabled ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} />
+                          </button>
+                          {settings.mementoMoriEnabled && (
+                            <>
+                              <button
+                                onClick={() => {
+                                  const next = !showPinnedTabs;
+                                  setShowPinnedTabs(next);
+                                  onUpdateSettings({ ...settings, showPinnedTabs: next });
+                                }}
+                                className={`w-14 h-8 p-1 transition-colors duration-200 ease-linear border-2 border-zinc-900 ${showPinnedTabs ? 'bg-zinc-900' : 'bg-white'}`}
+                              >
+                                <div className={`w-5 h-5 bg-white border border-zinc-900 shadow-sm transform transition-transform duration-200 ${showPinnedTabs ? 'translate-x-6' : 'translate-x-0 bg-zinc-900'}`} />
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                max="50"
+                                value={tabLimitInput}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (/^\d*$/.test(val)) {
+                                    setTabLimitInput(val);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const num = parseInt(tabLimitInput, 10);
+                                  const next = Math.max(1, isNaN(num) ? (settings.tabLimit || 1) : num);
+                                  setTabLimitInput(next.toString());
+                                  if (next !== settings.tabLimit) {
+                                    onUpdateSettings({ ...settings, tabLimit: next });
+                                  }
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const num = parseInt(tabLimitInput, 10);
+                                    const next = Math.max(1, isNaN(num) ? (settings.tabLimit || 1) : num);
+                                    setTabLimitInput(next.toString());
+                                    if (next !== settings.tabLimit) {
+                                      onUpdateSettings({ ...settings, tabLimit: next });
+                                    }
+                                  }
+                                }}
+                                className="w-20 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none"
+                              />
+                            </>
+                          )}
+                        </div>
                       </div>
                    </div>
                   <div className="p-8 border-b border-zinc-200 flex items-center justify-between hover:bg-zinc-50 transition-colors">
@@ -913,9 +999,9 @@ const renderListTable = (type: 'blocklist' | 'greylist' | 'whitelist') => {
                           <div className="flex flex-col">
                             <label className="text-[10px] font-bold uppercase text-zinc-500 mb-1">Minutes</label>
                             <input type="number" min="1" max="180" value={settings.frictionDurationMinutes || 10} onChange={(e) => onUpdateSettings({...settings, frictionDurationMinutes: Math.max(1, parseInt(e.target.value) || 10)})} className="w-24 h-10 border-2 border-zinc-900 p-2 font-mono text-center text-lg font-bold focus:outline-none" />
-                          </div>
                         </div>
-                     </div>
+                      </div>
+                   </div>
                    {/* AI CONFIG */}
                    <div className="p-8 flex items-center justify-between hover:bg-zinc-50 transition-colors">
                       <div className="flex items-center gap-6"><div className="w-12 h-12 border-2 border-zinc-900 flex items-center justify-center text-zinc-900"><Sparkles className="w-6 h-6" /></div><div><p className="text-lg font-bold uppercase tracking-tight">Gemini Integration</p><p className="text-xs text-zinc-500 font-mono uppercase mt-1">Context-aware Stoic quotes (Optional)</p></div></div>
